@@ -13,7 +13,7 @@ const COLS = [
   "reason_for_score","recommended_action",
   "status","crawl_depth","parent_username",
   "email","email_status","email_provider","enriched_at",
-  "linkedin_url",
+  "linkedin_url","youtube_url",
   "funnel_url","funnel_platform","funnel_program_name","funnel_offer_summary","funnel_price","funnel_extracted_at",
   "created_at",
 ] as const;
@@ -52,6 +52,8 @@ export async function GET(req: Request) {
   if (sp.has_email === "no") q = q.is("email", null);
   if (sp.has_linkedin === "yes") q = q.not("linkedin_url", "is", null);
   if (sp.has_linkedin === "no") q = q.is("linkedin_url", null);
+  if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
+  if (sp.has_youtube === "no") q = q.is("youtube_url", null);
   q = q.order("overall_score", { ascending: false, nullsFirst: false }).limit(10000);
 
   const { data, error } = await q;

@@ -47,6 +47,12 @@ type Events = {
       crawl_job_id?: string | null;
     };
   };
+  "lead/score.requested": {
+    data: {
+      lead_id: string;
+      crawl_job_id?: string | null;
+    };
+  };
 };
 
 export const inngest = new Inngest({

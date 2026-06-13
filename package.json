@@ -6,8 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && eslint . && rm -rf .next && next build",
     "inngest:dev": "npx inngest-cli@latest dev",
     "db:push": "supabase db push"
   },

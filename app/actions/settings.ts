@@ -28,6 +28,7 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     claude_api_key: String(formData.get("claude_api_key") ?? "") || null,
     claude_model: String(formData.get("claude_model") ?? prev.claude_model),
     scrapingbee_api_key: String(formData.get("scrapingbee_api_key") ?? "") || null,
+    serper_api_key: String(formData.get("serper_api_key") ?? "") || null,
     max_crawl_depth: num(formData.get("max_crawl_depth"), prev.max_crawl_depth),
     max_profiles_per_account: num(formData.get("max_profiles_per_account"), prev.max_profiles_per_account),
     crawl_score_threshold: num(formData.get("crawl_score_threshold"), prev.crawl_score_threshold),

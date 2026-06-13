@@ -31,6 +31,7 @@ type Search = {
   has_funnel?: string;
   has_email?: string;
   has_linkedin?: string;
+  has_youtube?: string;
   sort?: string;
   page?: string;
 };
@@ -59,6 +60,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   if (sp.has_email === "no") q = q.is("email", null);
   if (sp.has_linkedin === "yes") q = q.not("linkedin_url", "is", null);
   if (sp.has_linkedin === "no") q = q.is("linkedin_url", null);
+  if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
+  if (sp.has_youtube === "no") q = q.is("youtube_url", null);
 
   const sort = sp.sort ?? "overall_score.desc";
   const [col, dir] = sort.split(".");

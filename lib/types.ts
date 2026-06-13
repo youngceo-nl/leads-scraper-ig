@@ -18,6 +18,7 @@ export type AppSettings = {
   claude_api_key: string | null;
   claude_model: string;
   scrapingbee_api_key: string | null;
+  serper_api_key: string | null;
   default_seeds: string[];
   max_crawl_depth: number;
   max_profiles_per_account: number;
@@ -101,6 +102,8 @@ export type Lead = {
   funnel_extraction_error: string | null;
   linkedin_url: string | null;
   linkedin_lookup_error: string | null;
+  youtube_url: string | null;
+  youtube_lookup_error: string | null;
   outreach_count: number;
   last_outreach_at: string | null;
   last_outreach_error: string | null;

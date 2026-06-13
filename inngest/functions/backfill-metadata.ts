@@ -18,8 +18,31 @@ import { logCrawl, logError } from "@/lib/pipeline/persist";
 // Path is chosen at runtime by checking `settings.instagram_session_cookie`.
 
 const APIFY_BATCH = 50;
-const COOKIE_BATCH = 10;
-const COOKIE_DELAY_MS = 2500; // 2.5s between profiles in cookie mode
+const COOKIE_BATCH = 25;
+// Base 1.0s between profiles, jittered to look human (700–1800ms range, mean
+// ~1.25s). Every ~15 requests we inject a longer "thinking pause" (2–5s) to
+// mimic someone scrolling and reading. Bot-detection on IG looks at
+// inter-request variance + occasional natural pauses; constant intervals are
+// the cheapest red flag.
+const COOKIE_DELAY_BASE_MS = 1000;
+
+function jitteredDelay(base: number): number {
+  // Uniform 0.7x → 1.8x of base. Mean lifts to ~1.25x so global throughput
+  // stays well under 1 req/s on average.
+  const min = base * 0.7;
+  const max = base * 1.8;
+  return Math.floor(min + Math.random() * (max - min));
+}
+
+function maybeLongPause(): number {
+  // 6% chance per request → roughly one "I'm reading a post" pause per 15-20
+  // requests. 2–5s, uniform.
+  if (Math.random() < 0.06) {
+    return Math.floor(2000 + Math.random() * 3000);
+  }
+  return 0;
+}
+
 
 export const backfillMetadata = inngest.createFunction(
   {
@@ -53,22 +76,24 @@ export const backfillMetadata = inngest.createFunction(
       let updated = 0;
       let scraped = 0;
       let halt = false;
+      const allUpdatedLeadIds: string[] = [];
 
       for (let bi = 0; bi < batches.length; bi++) {
         if (halt) break;
         const batch = batches[bi];
         const result = await step.run(`cookie-batch-${bi}`, async () => {
           const sb = createAdminClient();
+          const updatedLeadIds: string[] = [];
           let s = 0, u = 0;
           for (const username of batch) {
             try {
               const p = await fetchProfileMetadataDirect({ username, sessionCookie: cookie });
               if (!p) {
-                await sleep(COOKIE_DELAY_MS);
+                await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS) + maybeLongPause());
                 continue;
               }
               s++;
-              const { error } = await sb
+              const { data, error } = await sb
                 .from("leads")
                 .update({
                   full_name: p.full_name,
@@ -79,9 +104,17 @@ export const backfillMetadata = inngest.createFunction(
                   posts: p.posts,
                   is_private: p.is_private,
                   is_verified: p.is_verified,
+                  recent_posts: p.recent_posts,
                 })
-                .eq("username", p.username);
-              if (!error) u++;
+                .eq("username", p.username)
+                .select("id")
+                .single();
+              if (!error && data?.id) {
+                u++;
+                // Auto-score every enriched lead — no follower gate. The hard
+                // filter in score-lead still rejects out-of-range accounts.
+                updatedLeadIds.push(data.id);
+              }
             } catch (err) {
               const direct = err instanceof InstagramDirectError ? err : null;
               const msg = direct ? direct.message : (err as Error).message;
@@ -94,16 +127,29 @@ export const backfillMetadata = inngest.createFunction(
               // Non-retryable IG error (cookie expired / challenge) → stop the
               // whole backfill so we don't burn the cookie or trigger more bans.
               if (direct && !direct.retryable) {
-                return { s, u, halt: true };
+                return { s, u, updatedLeadIds, halt: true };
               }
             }
-            await sleep(COOKIE_DELAY_MS);
+            await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS) + maybeLongPause());
           }
-          return { s, u, halt: false };
+          return { s, u, updatedLeadIds, halt: false };
         });
         scraped += result.s;
         updated += result.u;
+        allUpdatedLeadIds.push(...result.updatedLeadIds);
         halt = result.halt;
+      }
+
+      // Auto-score every lead we just enriched. Each lead becomes its own
+      // `lead/score.requested` event; score-lead runs them with high concurrency.
+      if (allUpdatedLeadIds.length > 0) {
+        await step.sendEvent(
+          "fan-out-score",
+          allUpdatedLeadIds.map((lead_id) => ({
+            name: "lead/score.requested" as const,
+            data: { lead_id, crawl_job_id: crawl_job_id ?? null },
+          })),
+        );
       }
 
       await logCrawl({
@@ -112,7 +158,7 @@ export const backfillMetadata = inngest.createFunction(
         parent_username: null,
         action: "backfill_metadata",
         depth: 0,
-        detail: `mode=cookie requested=${usernames.length} scraped=${scraped} updated=${updated} batches=${batches.length}${halt ? " HALTED" : ""}`,
+        detail: `mode=cookie requested=${usernames.length} scraped=${scraped} updated=${updated} auto_scored=${allUpdatedLeadIds.length} batches=${batches.length}${halt ? " HALTED" : ""}`,
       });
 
       return { processed: usernames.length, scraped, updated, batches: batches.length, mode: "cookie", halted: halt };
@@ -136,6 +182,7 @@ export const backfillMetadata = inngest.createFunction(
 
     let updated = 0;
     let scraped = 0;
+    const apifyLeadIds: string[] = [];
     for (let bi = 0; bi < batches.length; bi++) {
       const batch = batches[bi];
       const result = await step.run(`apify-batch-${bi}`, async () => {
@@ -155,11 +202,12 @@ export const backfillMetadata = inngest.createFunction(
       scraped += result.length;
 
       const wrote = await step.run(`update-apify-batch-${bi}`, async () => {
-        if (result.length === 0) return 0;
+        if (result.length === 0) return { count: 0, ids: [] as string[] };
         const sb = createAdminClient();
         let wroteCount = 0;
+        const ids: string[] = [];
         for (const p of result) {
-          const { error } = await sb
+          const { data, error } = await sb
             .from("leads")
             .update({
               full_name: p.full_name,
@@ -170,13 +218,31 @@ export const backfillMetadata = inngest.createFunction(
               posts: p.posts,
               is_private: p.is_private,
               is_verified: p.is_verified,
+              recent_posts: p.recent_posts,
             })
-            .eq("username", p.username);
-          if (!error) wroteCount++;
+            .eq("username", p.username)
+            .select("id")
+            .maybeSingle();
+          if (!error && data?.id) {
+            wroteCount++;
+            ids.push(data.id);
+          }
         }
-        return wroteCount;
+        return { count: wroteCount, ids };
       });
-      updated += wrote;
+      updated += wrote.count;
+      apifyLeadIds.push(...wrote.ids);
+    }
+
+    // Auto-score every enriched lead (no follower gate), same as the cookie path.
+    if (apifyLeadIds.length > 0) {
+      await step.sendEvent(
+        "fan-out-score",
+        apifyLeadIds.map((lead_id) => ({
+          name: "lead/score.requested" as const,
+          data: { lead_id, crawl_job_id: crawl_job_id ?? null },
+        })),
+      );
     }
 
     await logCrawl({
@@ -185,7 +251,7 @@ export const backfillMetadata = inngest.createFunction(
       parent_username: null,
       action: "backfill_metadata",
       depth: 0,
-      detail: `mode=apify requested=${usernames.length} scraped=${scraped} updated=${updated} batches=${batches.length}`,
+      detail: `mode=apify requested=${usernames.length} scraped=${scraped} updated=${updated} auto_scored=${apifyLeadIds.length} batches=${batches.length}`,
     });
 
     return { processed: usernames.length, scraped, updated, batches: batches.length, mode: "apify" };

@@ -63,7 +63,7 @@ export function FunnelCard({ leadId, initial }: { leadId: string; initial: Initi
         </Button>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {noLink && <p className="text-muted-foreground">No link in this account's bio — nothing to look up.</p>}
+        {noLink && <p className="text-muted-foreground">No link in this account&apos;s bio — nothing to look up.</p>}
 
         {!noLink && !hasFunnel && !data.funnel_extraction_error && (
           <p className="text-muted-foreground">Not looked up yet.</p>

@@ -8,6 +8,7 @@ export type EnrichLeadResponse = {
   email?: string | null;
   email_status?: string;
   linkedin_url?: string | null;
+  youtube_url?: string | null;
   source?: string;
   error?: string;
 };
@@ -27,6 +28,7 @@ export async function enrichLead(leadId: string): Promise<EnrichLeadResponse> {
     email: r.email,
     email_status: r.email_status,
     linkedin_url: r.linkedin_url,
+    youtube_url: r.youtube_url,
     source: r.source,
     error: r.error ?? undefined,
   };

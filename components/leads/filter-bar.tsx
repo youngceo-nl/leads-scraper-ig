@@ -120,6 +120,17 @@ export function LeadsFilterBar({ initial }: { initial: State }) {
         </Select>
       </Field>
 
+      <Field label="Has YouTube">
+        <Select value={s.has_youtube ?? "any"} onValueChange={(v) => set("has_youtube", v === "any" ? undefined : v)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any</SelectItem>
+            <SelectItem value="yes">Has YouTube</SelectItem>
+            <SelectItem value="no">No YouTube</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
       <Field label="Sort by">
         <Select value={s.sort ?? "overall_score.desc"} onValueChange={(v) => set("sort", v)}>
           <SelectTrigger><SelectValue /></SelectTrigger>

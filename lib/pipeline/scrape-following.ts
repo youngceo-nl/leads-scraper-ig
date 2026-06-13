@@ -1,6 +1,7 @@
 import "server-only";
 import { scrapeFollowing as apifyFollowing, scrapeFollowingDetailed as apifyFollowingDetailed, type DiscoveredFollowing } from "@/lib/apify/actors";
 import { scrapeFollowingViaScrapingBee } from "@/lib/scrapingbee/instagram";
+import { fetchFollowingDirect } from "@/lib/instagram/direct";
 import { logError } from "@/lib/pipeline/persist";
 import type { AppSettings } from "@/lib/types";
 
@@ -72,25 +73,37 @@ export async function scrapeFollowingWithFallback(opts: {
 
 // Detailed variant: returns the per-follower metadata so we can bulk-upsert
 // leads with full_name / is_private / etc. instead of just usernames.
-// SB fallback only knows usernames, so those rows come back with metadata=null.
+// Provider priority:
+//   1. COOKIE  → free direct fetch with the burner session cookie (always
+//                preferred when cookie is set, regardless of provider setting)
+//   2. APIFY   → community actor, paid
+//   3. SB      → ScrapingBee residential proxies, paid
 export async function scrapeFollowingDetailedWithFallback(opts: {
   username: string;
   settings: AppSettings;
   apifyToken: string | null;
   crawl_job_id?: string | null;
   limitOverride?: number | null;
-}): Promise<{ items: DiscoveredFollowing[]; provider: "apify" | "scrapingbee" }> {
+}): Promise<{ items: DiscoveredFollowing[]; provider: "cookie" | "apify" | "scrapingbee" }> {
   const { username, settings, apifyToken } = opts;
   const sbKey = settings.scrapingbee_api_key || process.env.SCRAPINGBEE_API_KEY || "";
-  const sbCookie = settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE || null;
+  const sbCookie = (settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE || "").trim();
   const provider = settings.following_scraper_provider;
   const limit = opts.limitOverride && opts.limitOverride > 0
     ? opts.limitOverride
     : settings.max_profiles_per_account;
 
+  const tryCookie = async (): Promise<DiscoveredFollowing[]> => {
+    if (!sbCookie) throw new Error("IG session cookie not configured");
+    return fetchFollowingDirect({ username, sessionCookie: sbCookie, limit });
+  };
+
   const tryApify = async (): Promise<DiscoveredFollowing[]> => {
     if (!apifyToken) throw new Error("Apify token not configured");
-    return apifyFollowingDetailed({ token: apifyToken, username, limit });
+    const items = await apifyFollowingDetailed({ token: apifyToken, username, limit });
+    // Apify actor minimum is 100 — trim to the requested limit so the seed's
+    // max_profiles_to_scrape is honored.
+    return items.slice(0, limit);
   };
 
   const trySb = async (): Promise<DiscoveredFollowing[]> => {
@@ -99,9 +112,9 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
       apiKey: sbKey,
       username,
       limit,
-      sessionCookie: sbCookie,
+      sessionCookie: sbCookie || null,
     });
-    return usernames.map((u) => ({
+    return usernames.slice(0, limit).map((u) => ({
       username: u.toLowerCase(),
       full_name: null,
       is_private: false,
@@ -110,6 +123,22 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
       ig_user_id: null,
     }));
   };
+
+  // 1. Free cookie path wins whenever cookie is available.
+  if (sbCookie) {
+    try {
+      return { items: await tryCookie(), provider: "cookie" };
+    } catch (cookieErr) {
+      const msg = cookieErr instanceof Error ? cookieErr.message : String(cookieErr);
+      await logError({
+        context: "ig.cookie.following.fallback",
+        error_message: `Cookie path failed, falling back to provider=${provider}: ${msg}`,
+        payload: { username },
+        crawl_job_id: opts.crawl_job_id ?? null,
+      });
+      // fall through to the configured paid provider
+    }
+  }
 
   if (provider === "scrapingbee") {
     return { items: await trySb(), provider: "scrapingbee" };

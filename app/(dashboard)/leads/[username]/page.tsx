@@ -100,6 +100,17 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
           {!l.linkedin_url && l.linkedin_lookup_error && (
             <p className="text-xs text-muted-foreground">LinkedIn search: {l.linkedin_lookup_error}</p>
           )}
+          {l.youtube_url && (
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="outline">YouTube</Badge>
+              <a className="hover:underline truncate" href={l.youtube_url} target="_blank" rel="noreferrer">
+                {l.youtube_url}
+              </a>
+            </div>
+          )}
+          {!l.youtube_url && l.youtube_lookup_error && (
+            <p className="text-xs text-muted-foreground">YouTube search: {l.youtube_lookup_error}</p>
+          )}
           {l.enrichment_error && <p className="text-xs text-red-600 mt-1">{l.enrichment_error}</p>}
           {l.outreach_count > 0 && (
             <p className="text-xs text-muted-foreground mt-2">

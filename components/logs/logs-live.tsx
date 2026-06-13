@@ -70,7 +70,7 @@ export function LogsLive({
         <CardHeader><CardTitle>Problems ({errors.length})</CardTitle></CardHeader>
         <CardContent className="p-0">
           {errors.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">No problems — everything's running smoothly.</p>
+            <p className="p-6 text-sm text-muted-foreground">No problems — everything&apos;s running smoothly.</p>
           ) : (
             <Table>
               <TableHeader>

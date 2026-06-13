@@ -26,7 +26,6 @@ export type EnrichmentInputs = {
   domain: string | null;
   skip_reason?:
     | "missing_full_name"
-    | "single_word_name"
     | "missing_external_link"
     | "link_aggregator"
     | "invalid_url";
@@ -46,11 +45,10 @@ export function deriveInputs(opts: {
     .replace(/[|·•@()\[\]{}]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
-  if (tokens.length < 2) {
-    return { first_name: tokens[0] ?? null, last_name: null, domain: null, skip_reason: "single_word_name" };
-  }
-  const first = tokens[0];
-  const last = tokens[tokens.length - 1];
+  // Single-word names are no longer skipped: keep the lone token as the first
+  // name (last stays null) and still attempt a domain-based lookup.
+  const first = tokens[0] ?? null;
+  const last = tokens.length >= 2 ? tokens[tokens.length - 1] : null;
 
   if (!external_link || !external_link.trim()) {
     return { first_name: first, last_name: last, domain: null, skip_reason: "missing_external_link" };
@@ -118,7 +116,8 @@ export async function findEmail(opts: {
       error: null,
     };
   }
-  if (!inputs.first_name || !inputs.last_name || !inputs.domain) {
+  // Last name is optional (single-name leads); first name + domain is enough to attempt.
+  if (!inputs.first_name || !inputs.domain) {
     return {
       email: null,
       email_status: "skipped:incomplete_inputs",
@@ -129,14 +128,15 @@ export async function findEmail(opts: {
   }
 
   try {
+    const body: Record<string, string> = {
+      first_name: inputs.first_name,
+      domain: inputs.domain,
+    };
+    if (inputs.last_name) body.last_name = inputs.last_name;
     const json = await airscalePost<AirscaleEmailResponse>({
       apiKey,
       path: "/email",
-      body: {
-        first_name: inputs.first_name,
-        last_name: inputs.last_name,
-        domain: inputs.domain,
-      },
+      body,
     });
     await logApiUsage({
       provider: "airscale",

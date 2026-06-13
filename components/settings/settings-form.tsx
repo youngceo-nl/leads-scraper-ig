@@ -11,7 +11,7 @@ import { TestCookieButton } from "@/components/settings/test-cookie-button";
 import type { AppSettings } from "@/lib/types";
 
 export function SettingsForm({ initial }: { initial: AppSettings }) {
-  const [state, action, pending] = useActionState(
+  const [, action, pending] = useActionState(
     async (prev: AppSettings, fd: FormData) => {
       await saveSettings(prev, fd);
       return prev;
@@ -26,6 +26,7 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
         <CardContent className="space-y-3">
           <Field label="Apify API key (optional)" name="apify_api_key" defaultValue={initial.apify_api_key ?? ""} type="password" hint="Falls back to APIFY_TOKEN env var if blank." />
           <Field label="ScrapingBee API key" name="scrapingbee_api_key" defaultValue={initial.scrapingbee_api_key ?? ""} type="password" hint="Falls back to SCRAPINGBEE_API_KEY env var if blank." />
+          <Field label="Serper.dev API key" name="serper_api_key" defaultValue={initial.serper_api_key ?? ""} type="password" hint="Google Search API used to find LinkedIn/YouTube profiles. Falls back to SERPER_API_KEY env var." />
 
           <div className="space-y-1 pt-2">
             <Label className="text-sm">Scoring provider</Label>
