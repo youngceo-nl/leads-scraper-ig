@@ -9,6 +9,8 @@ import { EnrichButton } from "@/components/leads/enrich-button";
 import { SendEmailButton } from "@/components/leads/send-email-button";
 import { ProcessButton } from "@/components/leads/process-button";
 import { HeaderWithTip } from "@/components/ui/info-tip";
+import { SourceBadge } from "@/components/leads/source-badge";
+import { AnalyzeProvider } from "@/components/leads/analyze-context";
 import { formatNumber, formatPct, scoreColor } from "@/lib/utils";
 import { buildKeywordOr } from "@/lib/leads/keyword-filter";
 import { statusLabel } from "@/lib/labels";
@@ -40,6 +42,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page ?? 1));
   const sb = createAdminClient();
+
+  const { data: seeds } = await sb.from("seeds").select("id, username");
+  const seedMap = new Map((seeds ?? []).map((s) => [s.id, s.username]));
+
+  const { data: seedCounts } = await sb
+    .from("leads")
+    .select("source_seed_id")
+    .not("source_seed_id", "is", null);
+  const countMap = new Map<string, number>();
+  for (const row of seedCounts ?? []) {
+    if (row.source_seed_id) countMap.set(row.source_seed_id, (countMap.get(row.source_seed_id) ?? 0) + 1);
+  }
 
   let q = sb.from("leads").select("*", { count: "exact" });
 
@@ -114,6 +128,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 </TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Analyze</TableHead>
+                <TableHead>Source</TableHead>
                 <TableHead>
                   <HeaderWithTip label="Level" tip="How far this account is from a source account. Level 0 is a source account, level 1 is someone they follow, and so on." />
                 </TableHead>
@@ -125,6 +140,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               </TableRow>
             </TableHeader>
             <TableBody>
+              <AnalyzeProvider>
               {(leads ?? []).map((l) => (
                 <TableRow key={l.id} className="align-top">
                   <TableCell>
@@ -161,7 +177,20 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   </TableCell>
                   <TableCell><StatusBadge status={l.status} /></TableCell>
                   <TableCell>
-                    <ProcessButton leadId={l.id} status={l.status} />
+                    <ProcessButton
+                      leadId={l.id}
+                      status={l.status}
+                      sourceSeedId={l.source_seed_id ?? null}
+                      sourceUsername={l.source_seed_id ? (seedMap.get(l.source_seed_id) ?? null) : null}
+                    />
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {l.source_seed_id && seedMap.get(l.source_seed_id) ? (
+                      <SourceBadge
+                        username={seedMap.get(l.source_seed_id)!}
+                        count={countMap.get(l.source_seed_id) ?? 0}
+                      />
+                    ) : "—"}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{l.crawl_depth}</TableCell>
                   <TableCell className="text-xs">
@@ -203,6 +232,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   </TableCell>
                 </TableRow>
               )}
+              </AnalyzeProvider>
             </TableBody>
           </Table>
         </CardContent>
