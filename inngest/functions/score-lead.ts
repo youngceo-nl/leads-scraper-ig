@@ -78,7 +78,7 @@ export const scoreLead = inngest.createFunction(
     const metrics = computeMetrics(profile);
 
     // Gate 2 — metrics gate (engagement, post frequency)
-    const mg = metricsGate(metrics, settings);
+    const mg = metricsGate(metrics, settings, profile.recent_posts.length);
     if (!mg.ok) {
       await step.run("persist-rejected-metrics", async () => {
         const sb = createAdminClient();

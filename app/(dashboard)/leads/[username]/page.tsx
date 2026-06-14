@@ -23,7 +23,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
   const { data: lead } = await sb.from("leads").select("*").eq("username", username.toLowerCase()).single();
   if (!lead) notFound();
 
-  const [{ data: notes }, { data: path }] = await Promise.all([
+  const [{ data: notes }, { data: path }, { data: replies }] = await Promise.all([
     sb.from("lead_notes").select("*").eq("lead_id", lead.id).order("created_at", { ascending: false }),
     sb
       .from("crawl_logs")
@@ -31,6 +31,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
       .eq("profile_username", username.toLowerCase())
       .order("created_at", { ascending: true })
       .limit(50),
+    sb
+      .from("inbox_messages")
+      .select("id, from_name, from_email, subject, body_text, snippet, received_at")
+      .eq("lead_id", lead.id)
+      .order("received_at", { ascending: false }),
   ]);
 
   const l = lead as Lead;
@@ -137,6 +142,24 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
           funnel_extraction_error: l.funnel_extraction_error,
         }}
       />
+
+      {(replies ?? []).length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Replies ({(replies ?? []).length})</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {(replies ?? []).map((r) => (
+              <div key={r.id} className="rounded-md border p-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium">{r.from_name || r.from_email || "Unknown sender"}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">{new Date(r.received_at).toLocaleString()}</span>
+                </div>
+                {r.subject && <div className="text-sm text-muted-foreground mt-0.5">{r.subject}</div>}
+                <p className="text-sm whitespace-pre-wrap break-words mt-2">{r.body_text?.trim() || r.snippet || "(empty message)"}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Followers" value={formatNumber(l.followers)} />

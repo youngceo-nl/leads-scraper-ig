@@ -40,20 +40,9 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     exclude_keywords: csv(formData.get("exclude_keywords")),
     following_scraper_provider: (() => {
       const v = String(formData.get("following_scraper_provider") ?? "auto");
-      return (["apify", "scrapingbee", "proxy", "auto"] as const).includes(v as never) ? (v as "apify" | "scrapingbee" | "proxy" | "auto") : "auto";
+      return (["apify", "scrapingbee", "cookie", "auto"] as const).includes(v as never) ? (v as "apify" | "scrapingbee" | "cookie" | "auto") : "auto";
     })(),
     instagram_session_cookie: String(formData.get("instagram_session_cookie") ?? "") || null,
-    instagram_cookies: String(formData.get("instagram_cookies") ?? "") || null,
-    proxy_provider: (() => {
-      const v = String(formData.get("proxy_provider") ?? "iproyal");
-      return (["iproyal", "9proxy", "dataimpulse"] as const).includes(v as never) ? (v as "iproyal" | "9proxy" | "dataimpulse") : "iproyal";
-    })(),
-    iproyal_user: String(formData.get("iproyal_user") ?? "") || null,
-    iproyal_pass: String(formData.get("iproyal_pass") ?? "") || null,
-    nineproxy_user: String(formData.get("nineproxy_user") ?? "") || null,
-    nineproxy_pass: String(formData.get("nineproxy_pass") ?? "") || null,
-    dataimpulse_user: String(formData.get("dataimpulse_user") ?? "") || null,
-    dataimpulse_pass: String(formData.get("dataimpulse_pass") ?? "") || null,
     scoring_provider: (() => {
       const v = String(formData.get("scoring_provider") ?? "openai");
       return v === "claude" ? "claude" : "openai";

@@ -31,16 +31,8 @@ export type AppSettings = {
   min_posts_last_30_days: number;
   include_keywords: string[];
   exclude_keywords: string[];
-  following_scraper_provider: "apify" | "scrapingbee" | "proxy" | "auto";
+  following_scraper_provider: "apify" | "scrapingbee" | "cookie" | "auto";
   instagram_session_cookie: string | null;
-  instagram_cookies: string | null;
-  proxy_provider: "iproyal" | "9proxy" | "dataimpulse";
-  iproyal_user: string | null;
-  iproyal_pass: string | null;
-  nineproxy_user: string | null;
-  nineproxy_pass: string | null;
-  dataimpulse_user: string | null;
-  dataimpulse_pass: string | null;
   scoring_provider: "openai" | "claude";
   openai_api_key: string | null;
   openai_model: string;

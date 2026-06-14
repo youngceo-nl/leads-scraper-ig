@@ -3,7 +3,8 @@
     "allow": [
       "Bash(curl -s \"https://docs.airscale.io/sitemap.xml\")",
       "Bash(curl -s \"https://docs.airscale.io/llms.txt\")",
-      "Bash(curl -s \"https://docs.airscale.io/llms-full.txt\")"
+      "Bash(curl -s \"https://docs.airscale.io/llms-full.txt\")",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")"
     ]
   }
 }

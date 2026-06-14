@@ -78,7 +78,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
   if (sp.has_youtube === "no") q = q.is("youtube_url", null);
 
-  const sort = sp.sort ?? "overall_score.desc";
+  const sort = sp.sort ?? "created_at.desc";
   const [col, dir] = sort.split(".");
   q = q.order(col, { ascending: dir === "asc", nullsFirst: false });
 

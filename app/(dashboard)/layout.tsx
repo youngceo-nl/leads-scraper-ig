@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { LayoutDashboard, Users, Settings, ScrollText, Sprout, LogOut, Gauge, CreditCard } from "lucide-react";
+import { LayoutDashboard, Users, Settings, ScrollText, Sprout, LogOut, Gauge, CreditCard, Inbox } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/seeds", label: "Source Accounts", icon: Sprout },
   { href: "/leads", label: "Leads", icon: Users },
+  { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/logs", label: "Activity", icon: ScrollText },
   { href: "/usage", label: "Usage", icon: Gauge },
   { href: "/billing", label: "Costs", icon: CreditCard },

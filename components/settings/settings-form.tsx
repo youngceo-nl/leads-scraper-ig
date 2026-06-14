@@ -56,12 +56,11 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
             <Label className="text-sm">Where to get follow lists</Label>
             <select name="following_scraper_provider" defaultValue={initial.following_scraper_provider}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
-              <option value="auto">Auto (proxy → cookie → Apify → ScrapingBee)</option>
-              <option value="proxy">Proxy + cookie (cheapest)</option>
+              <option value="auto">Auto (cookie → Apify → ScrapingBee)</option>
+              <option value="cookie">Cookie only (free, uses session cookie)</option>
               <option value="apify">Apify only</option>
               <option value="scrapingbee">ScrapingBee only</option>
             </select>
-            <p className="text-xs text-muted-foreground">Proxy requires credentials and a cookie pool below.</p>
           </div>
           <div className="space-y-1 col-span-2">
             <Label className="text-sm">Instagram session cookie (single burner account)</Label>
@@ -72,37 +71,6 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
             </p>
             <TestCookieButton />
           </div>
-          <div className="space-y-1 col-span-2">
-            <Label className="text-sm">Cookie pool (multiple accounts, comma-separated)</Label>
-            <Textarea name="instagram_cookies" defaultValue={(initial as { instagram_cookies?: string | null }).instagram_cookies ?? ""}
-              placeholder="sessionid=abc123, sessionid=def456, sessionid=ghi789" rows={3} />
-            <p className="text-xs text-muted-foreground">
-              Used by the proxy scraper. Cookies rotate round-robin to spread load across accounts.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Proxy</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-3">
-          <div className="space-y-1 col-span-2">
-            <Label className="text-sm">Proxy provider</Label>
-            <select name="proxy_provider" defaultValue={(initial as { proxy_provider?: string }).proxy_provider ?? "iproyal"}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
-              <option value="iproyal">IPRoyal</option>
-              <option value="9proxy">9proxy</option>
-              <option value="dataimpulse">DataImpulse</option>
-            </select>
-          </div>
-          <Field label="IPRoyal username" name="iproyal_user" defaultValue={(initial as { iproyal_user?: string | null }).iproyal_user ?? ""} type="text" hint="geo.iproyal.com:12321" />
-          <Field label="IPRoyal password" name="iproyal_pass" defaultValue={(initial as { iproyal_pass?: string | null }).iproyal_pass ?? ""} type="password" />
-          <Field label="9proxy username" name="nineproxy_user" defaultValue={(initial as { nineproxy_user?: string | null }).nineproxy_user ?? ""} type="text" hint="proxy.9proxy.com:6060" />
-          <Field label="9proxy password" name="nineproxy_pass" defaultValue={(initial as { nineproxy_pass?: string | null }).nineproxy_pass ?? ""} type="password" />
-          <Field label="DataImpulse username" name="dataimpulse_user" defaultValue={(initial as { dataimpulse_user?: string | null }).dataimpulse_user ?? ""} type="text" hint="gw.dataimpulse.com:823" />
-          <Field label="DataImpulse password" name="dataimpulse_pass" defaultValue={(initial as { dataimpulse_pass?: string | null }).dataimpulse_pass ?? ""} type="password" />
         </CardContent>
       </Card>
 

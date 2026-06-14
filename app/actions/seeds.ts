@@ -85,6 +85,9 @@ export async function startCrawl(seed_id: string) {
   if (followingProvider === "scrapingbee" && !(sbOk && sbCookieOk)) {
     return { error: "ScrapingBee is selected but missing API key or Instagram session cookie. Add them in Settings." };
   }
+  if (followingProvider === "cookie" && !sbCookieOk) {
+    return { error: "Cookie-only is selected but no Instagram session cookie is set. Add one in Settings." };
+  }
   if (followingProvider === "auto" && !apifyOk && !(sbOk && sbCookieOk)) {
     return { error: "No scrape provider configured. Add an Apify key, or a ScrapingBee key + Instagram cookie, in Settings." };
   }
