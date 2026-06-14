@@ -10,6 +10,8 @@ export type RecentPost = {
   comments: number | null;
   views: number | null;
   taken_at: string | null;
+  is_reel?: boolean;
+  is_pinned?: boolean;
 };
 
 export type AppSettings = {

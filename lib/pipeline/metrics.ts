@@ -11,7 +11,13 @@ export type ComputedMetrics = {
 
 export function computeMetrics(profile: ScrapedProfile): ComputedMetrics {
   const posts = profile.recent_posts ?? [];
-  const likesArr = posts.map((p) => p.likes).filter((n): n is number => typeof n === "number");
+
+  // Prefer unpinned reels for engagement rate — more representative of organic reach.
+  // Fall back to all posts if no reel data is available.
+  const unpinnedReels = posts.filter((p) => p.is_reel && !p.is_pinned);
+  const metricsSource = unpinnedReels.length >= 3 ? unpinnedReels.slice(0, 3) : posts;
+
+  const likesArr = metricsSource.map((p) => p.likes).filter((n): n is number => typeof n === "number");
   const commentsArr = posts.map((p) => p.comments).filter((n): n is number => typeof n === "number");
   const viewsArr = posts.map((p) => p.views).filter((n): n is number => typeof n === "number");
 
@@ -38,8 +44,7 @@ function countWithin(posts: RecentPost[], days: number): number {
   return posts.reduce((acc, p) => {
     if (!p.taken_at) return acc;
     const t = Date.parse(p.taken_at);
-    if (Number.isNaN(t)) return acc;
-    return t >= cutoff ? acc + 1 : acc;
+    return Number.isNaN(t) ? acc : t >= cutoff ? acc + 1 : acc;
   }, 0);
 }
 

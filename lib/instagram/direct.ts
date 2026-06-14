@@ -43,6 +43,7 @@ type IgPostNode = {
 };
 
 type IgUser = {
+  id?: string;
   username?: string;
   full_name?: string;
   biography?: string;
@@ -137,7 +138,7 @@ export async function fetchProfileMetadataDirect(opts: {
   const user = parsed?.data?.user;
   if (!user || !user.username) return null;
 
-  const recent_posts: RecentPost[] = (user.edge_owner_to_timeline_media?.edges ?? [])
+  const timelinePosts: RecentPost[] = (user.edge_owner_to_timeline_media?.edges ?? [])
     .map((e) => e.node)
     .filter((n): n is IgPostNode => !!n)
     .map((n) => ({
@@ -146,7 +147,20 @@ export async function fetchProfileMetadataDirect(opts: {
       comments: n.edge_media_to_comment?.count ?? null,
       views: n.is_video ? n.video_view_count ?? null : null,
       taken_at: n.taken_at_timestamp ? new Date(n.taken_at_timestamp * 1000).toISOString() : null,
+      is_reel: false,
+      is_pinned: false,
     }));
+
+  // Fetch reels separately and merge — reels are used for engagement rate calculation.
+  let reels: RecentPost[] = [];
+  if (opts.sessionCookie && user.id) {
+    try {
+      reels = await fetchReelsDirect({ userId: user.id, sessionCookie: opts.sessionCookie, limit: 6 });
+    } catch { /* reels are best-effort */ }
+  }
+
+  // Merge: reels first (for metrics priority), then timeline posts
+  const recent_posts = [...reels, ...timelinePosts].slice(0, 12);
 
   return {
     username: user.username.toLowerCase(),
@@ -164,6 +178,57 @@ export async function fetchProfileMetadataDirect(opts: {
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// =============================================================================
+// Fetch the last N unpinned reels for a user via /api/v1/clips/user/
+// Returns RecentPost[] with is_reel=true, is_pinned set appropriately.
+// Requires a session cookie + the user's numeric IG ID.
+// =============================================================================
+export async function fetchReelsDirect(opts: {
+  userId: string;
+  sessionCookie: string;
+  limit?: number;
+}): Promise<RecentPost[]> {
+  const { userId, sessionCookie, limit = 9 } = opts;
+  const headers: Record<string, string> = {
+    "User-Agent": "Instagram 291.0.0.29.111 Android (30/11; 480dpi; 1080x2137; samsung; SM-G973F; beyond1; exynos9820; en_US; 493494379)",
+    "X-IG-App-ID": "936619743392459",
+    "Accept": "*/*",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Cookie": sessionCookie,
+  };
+  const body = `target_user_id=${userId}&page_size=${Math.min(limit, 9)}&include_feed_video=true`;
+
+  const res = await fetch("https://www.instagram.com/api/v1/clips/user/", {
+    method: "POST",
+    headers,
+    body,
+  });
+  if (!res.ok) return [];
+
+  let json: { items?: { media?: Record<string, unknown> }[] };
+  try { json = await res.json(); } catch { return []; }
+
+  return (json.items ?? [])
+    .slice(0, limit)
+    .map((item) => {
+      const media = item.media ?? {};
+      const isPinned = !!(media.is_pinned);
+      return {
+        caption: typeof media.caption === "object" && media.caption !== null
+          ? String((media.caption as Record<string, unknown>).text ?? "")
+          : null,
+        likes: typeof media.like_count === "number" ? media.like_count : null,
+        comments: typeof media.comment_count === "number" ? media.comment_count : null,
+        views: typeof media.play_count === "number" ? media.play_count : null,
+        taken_at: typeof media.taken_at === "number"
+          ? new Date((media.taken_at as number) * 1000).toISOString()
+          : null,
+        is_reel: true,
+        is_pinned: isPinned,
+      };
+    });
 }
 
 // =============================================================================
