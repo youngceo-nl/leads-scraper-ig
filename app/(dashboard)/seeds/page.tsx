@@ -31,7 +31,14 @@ export default async function SeedsPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Your source accounts</CardTitle></CardHeader>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Your source accounts</CardTitle>
+            <Link href="/seeds/history" className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-4">
+              View all accounts ever used →
+            </Link>
+          </div>
+        </CardHeader>
         <CardContent>
           <SeedManager
             seeds={seeds ?? []}

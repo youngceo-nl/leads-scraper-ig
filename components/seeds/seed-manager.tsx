@@ -3,7 +3,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Trash2, Play, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addSeed, deleteSeed, startCrawl, updateSeedLimit } from "@/app/actions/seeds";
+import { addSeed, deleteSeed, startCrawl, updateSeedLimit, type ScrapeProvider } from "@/app/actions/seeds";
 import type { Seed } from "@/lib/types";
 
 type LatestJob = {
@@ -79,6 +79,14 @@ export function SeedManager({
   );
 }
 
+const PROVIDER_OPTIONS: { value: ScrapeProvider; label: string }[] = [
+  { value: "auto",        label: "Auto (best available)" },
+  { value: "cookie",      label: "Cookie only (free)" },
+  { value: "proxy",       label: "Cookie + IP rotation" },
+  { value: "apify",       label: "Apify" },
+  { value: "scrapingbee", label: "ScrapingBee" },
+];
+
 function SeedRow({
   seed,
   defaultLimit,
@@ -90,6 +98,7 @@ function SeedRow({
 }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ScrapeProvider>("auto");
   const [limit, setLimit] = useState<string>(
     seed.max_profiles_to_scrape != null ? String(seed.max_profiles_to_scrape) : "",
   );
@@ -110,6 +119,12 @@ function SeedRow({
           @{seed.username}
         </a>
         {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+        {!msg && seed.exhausted_providers.includes("cookie") && (provider === "cookie" || provider === "auto") && (
+          <p className="text-xs text-amber-600 flex items-center gap-1">
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            Cookie exhausted — switch to Apify to get more accounts.
+          </p>
+        )}
         {lastError && !msg && (
           <p className="text-xs text-destructive flex items-center gap-1 truncate" title={lastError}>
             <AlertCircle className="h-3 w-3 shrink-0" /> Last search failed: {lastError}
@@ -147,14 +162,25 @@ function SeedRow({
         )}
       </div>
 
+      <select
+        value={provider}
+        onChange={(e) => setProvider(e.target.value as ScrapeProvider)}
+        className="h-8 rounded-md border border-input bg-transparent px-2 text-xs shadow-sm"
+        aria-label="Scrape method"
+      >
+        {PROVIDER_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+
       <Button
         size="sm"
         variant="secondary"
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const res = await startCrawl(seed.id);
-            setMsg("error" in res && res.error ? `Error: ${res.error}` : `Search started.`);
+            const res = await startCrawl(seed.id, provider);
+            setMsg("error" in res && res.error ? `Error: ${res.error}` : `Search started (${provider}).`);
           })
         }
       >

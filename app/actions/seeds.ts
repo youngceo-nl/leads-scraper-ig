@@ -68,7 +68,9 @@ export async function deleteSeed(id: string) {
   revalidatePath("/seeds");
 }
 
-export async function startCrawl(seed_id: string) {
+export type ScrapeProvider = "auto" | "cookie" | "proxy" | "apify" | "scrapingbee";
+
+export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvider) {
   await requireUser();
   const admin = createAdminClient();
   const { data: seed } = await admin
@@ -79,33 +81,26 @@ export async function startCrawl(seed_id: string) {
   if (!seed) return { error: "seed_not_found" };
 
   const settings = await getSettings(true);
+  const provider = providerOverride ?? settings.following_scraper_provider;
 
-  // Pre-flight: validate that at least one viable scrape provider is configured
-  // for the seed's first hop, plus a scoring provider with a key.
   const apifyOk = !!(settings.apify_api_key || process.env.APIFY_TOKEN);
   const sbOk = !!(settings.scrapingbee_api_key || process.env.SCRAPINGBEE_API_KEY);
-  const sbCookieOk = !!(settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE);
-  const followingProvider = settings.following_scraper_provider;
-  if (followingProvider === "apify" && !apifyOk) {
-    return { error: "Apify is selected but no Apify API key is set. Add one in Settings." };
-  }
-  if (followingProvider === "scrapingbee" && !(sbOk && sbCookieOk)) {
-    return { error: "ScrapingBee is selected but missing API key or Instagram session cookie. Add them in Settings." };
-  }
-  if (followingProvider === "cookie" && !sbCookieOk) {
-    return { error: "Cookie-only is selected but no Instagram session cookie is set. Add one in Settings." };
-  }
-  if (followingProvider === "auto" && !apifyOk && !(sbOk && sbCookieOk)) {
-    return { error: "No scrape provider configured. Add an Apify key, or a ScrapingBee key + Instagram cookie, in Settings." };
-  }
+  const cookieOk = !!(settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE);
+
+  if (provider === "apify" && !apifyOk)
+    return { error: "Apify selected but no Apify API key is set." };
+  if (provider === "scrapingbee" && !(sbOk && cookieOk))
+    return { error: "ScrapingBee selected but missing API key or Instagram cookie." };
+  if ((provider === "cookie" || provider === "proxy") && !cookieOk)
+    return { error: "Cookie/proxy selected but no Instagram session cookie configured." };
+  if (provider === "auto" && !apifyOk && !cookieOk)
+    return { error: "No scrape provider configured. Add an Apify key or Instagram cookie in Settings." };
 
   const scoring = settings.scoring_provider;
-  if (scoring === "claude" && !(settings.claude_api_key || process.env.ANTHROPIC_API_KEY)) {
-    return { error: "Claude is the scoring provider but no Anthropic API key is set. Add one in Settings." };
-  }
-  if (scoring === "openai" && !(settings.openai_api_key || process.env.OPENAI_API_KEY)) {
-    return { error: "OpenAI is the scoring provider but no OpenAI API key is set. Add one in Settings." };
-  }
+  if (scoring === "claude" && !(settings.claude_api_key || process.env.ANTHROPIC_API_KEY))
+    return { error: "Claude scoring selected but no Anthropic API key set." };
+  if (scoring === "openai" && !(settings.openai_api_key || process.env.OPENAI_API_KEY))
+    return { error: "OpenAI scoring selected but no OpenAI API key set." };
 
   const { data: job, error: jobErr } = await admin
     .from("crawl_jobs")
@@ -121,6 +116,7 @@ export async function startCrawl(seed_id: string) {
       seed_id: seed.id,
       seed_username: seed.username,
       profile_limit: seed.max_profiles_to_scrape ?? null,
+      provider_override: providerOverride ?? null,
     },
   });
   await admin.from("crawl_jobs").update({ inngest_run_id: ids[0] ?? null }).eq("id", job.id);

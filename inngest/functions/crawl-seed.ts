@@ -110,6 +110,31 @@ export const crawlSeed = inngest.createFunction(
       });
     }
 
+    // Only track cookie exhaustion — cookie is the only method with a hard cap
+    // (~250 accounts). Apify/ScrapingBee handle their own pagination fully.
+    const usedProvider = provider_override ?? effectiveSettings.following_scraper_provider;
+    const isCookieRun = usedProvider === "cookie" || usedProvider === "auto";
+    if (isCookieRun) {
+      await step.run("update-seed-exhaustion", async () => {
+        const sb = createAdminClient();
+        const { data: seed } = await sb
+          .from("seeds")
+          .select("exhausted_providers")
+          .eq("id", seed_id)
+          .single();
+        const current: string[] = seed?.exhausted_providers ?? [];
+        let updated: string[];
+        if (totalNew === 0 && !cursor) {
+          updated = current.includes("cookie") ? current : [...current, "cookie"];
+        } else {
+          updated = current.filter((p) => p !== "cookie");
+        }
+        if (JSON.stringify(updated) !== JSON.stringify(current)) {
+          await sb.from("seeds").update({ exhausted_providers: updated }).eq("id", seed_id);
+        }
+      });
+    }
+
     await markJobCompleted(crawl_job_id);
     return { discovered: totalNew, pages: pageIndex + 1 };
   },

@@ -51,6 +51,7 @@ export type Seed = {
   profile_url: string;
   notes: string | null;
   max_profiles_to_scrape: number | null;
+  exhausted_providers: string[];
   created_at: string;
 };
 
