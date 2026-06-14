@@ -127,7 +127,10 @@ function SeedRow({
         )}
         {lastError && !msg && (
           <p className="text-xs text-destructive flex items-center gap-1 truncate" title={lastError}>
-            <AlertCircle className="h-3 w-3 shrink-0" /> Last search failed: {lastError}
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            {lastError.toLowerCase().includes("rate-limited") || lastError.toLowerCase().includes("rate limited")
+              ? "Instagram rate-limited your cookie — wait a few hours or switch to Apify."
+              : `Last search failed: ${lastError}`}
           </p>
         )}
       </div>
