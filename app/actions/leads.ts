@@ -2,12 +2,65 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { toUsername, profileUrl } from "@/lib/pipeline/normalize";
+import { processLead } from "@/app/actions/process-lead";
 
 async function requireUser() {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) throw new Error("unauthorized");
   return user;
+}
+
+export type AddLeadResult = {
+  ok: boolean;
+  error?: string;
+  username?: string;
+  already_existed?: boolean;
+  analyzing?: boolean;
+};
+
+// Add a single lead by hand from the Leads page. We only need a username; the
+// rest of the profile is filled in by the normal analyze pipeline. When
+// `analyze` is on (the default) we kick that pipeline off immediately so a bare
+// username turns into a scored lead without a second click.
+export async function addLead(formData: FormData): Promise<AddLeadResult> {
+  await requireUser();
+
+  const raw = String(formData.get("input") ?? "").trim();
+  if (!raw) return { ok: false, error: "Enter an Instagram username or profile URL." };
+
+  const username = toUsername(raw);
+  if (!username || !/^[a-z0-9._]{1,30}$/.test(username)) {
+    return { ok: false, error: "That doesn't look like a valid Instagram username." };
+  }
+
+  const analyze = formData.get("analyze") === "on";
+  const sb = createAdminClient();
+
+  const { data: inserted, error } = await sb
+    .from("leads")
+    .insert({ username, profile_url: profileUrl(username), status: "pending", crawl_depth: 0 })
+    .select("id")
+    .single();
+
+  if (error) {
+    if (!/duplicate|unique/i.test(error.message)) return { ok: false, error: error.message };
+    revalidatePath("/leads");
+    return { ok: true, username, already_existed: true };
+  }
+
+  if (analyze && inserted?.id) {
+    const res = await processLead(inserted.id as string);
+    if (!res.ok) {
+      // The lead is saved; only the analysis couldn't start. Don't fail the add.
+      revalidatePath("/leads");
+      return { ok: true, username, analyzing: false, error: `Added, but analysis couldn't start: ${res.error}` };
+    }
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, username, analyzing: analyze };
 }
 
 export type DeleteLeadsResult = { ok: boolean; deleted: number; error?: string };

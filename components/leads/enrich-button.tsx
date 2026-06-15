@@ -1,8 +1,9 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Mail, Loader2, AlertCircle, Check, RefreshCw } from "lucide-react";
-import { enrichLead } from "@/app/actions/enrich";
+import { Mail, Loader2, AlertCircle, Check, RefreshCw, Instagram, Globe, Youtube } from "lucide-react";
+import type { EnrichProgress, EnrichStage } from "@/lib/pipeline/enrich-progress";
 
 type Props = {
   leadId: string;
@@ -12,8 +13,18 @@ type Props = {
   size?: "sm" | "default";
 };
 
+type ResultLine = {
+  type: "result";
+  ok: boolean;
+  email?: string | null;
+  email_status?: string | null;
+  error?: string | null;
+  detail?: string | null;
+};
+
 export function EnrichButton({ leadId, initialEmail, initialStatus, initialError, size = "sm" }: Props) {
-  const [pending, start] = useTransition();
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
   const [email, setEmail] = useState(initialEmail);
   const [status, setStatus] = useState(initialStatus);
   // `message` is the human-readable summary; `detail` is the raw step-by-step
@@ -21,22 +32,58 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
   const [message, setMessage] = useState<string | null>(deriveInitialMessage(initialStatus));
   const [detail, setDetail] = useState<string | null>(initialError ?? null);
   const [showDetail, setShowDetail] = useState(false);
+  // Live progress of the in-flight run — drives the brand icon + label so the
+  // user can see which source we're checking right now.
+  const [progress, setProgress] = useState<EnrichProgress | null>(null);
 
-  const onClick = () => {
+  const onClick = async () => {
     setMessage(null);
     setShowDetail(false);
-    start(async () => {
-      const r = await enrichLead(leadId);
-      setStatus(r.email_status ?? null);
-      if (r.ok && r.email) {
-        setEmail(r.email);
-        setMessage(null);
-        setDetail(null);
-      } else {
-        setMessage(r.error ?? "Something went wrong. Please try again.");
-        setDetail(r.detail ?? null);
+    setProgress(null);
+    setPending(true);
+    try {
+      const res = await fetch(`/api/enrich/${leadId}`, { method: "POST" });
+      if (!res.body) throw new Error("no stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let final: ResultLine | null = null;
+
+      // Read the NDJSON stream line-by-line; step lines update the live icon,
+      // the single result line is applied once the stream ends.
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line) as { type: string } & Record<string, unknown>;
+          if (ev.type === "step") setProgress(ev as unknown as EnrichProgress);
+          else if (ev.type === "result") final = ev as unknown as ResultLine;
+        }
       }
-    });
+
+      if (final) {
+        setStatus((final.email_status as string) ?? null);
+        if (final.ok && final.email) {
+          setEmail(final.email);
+          setMessage(null);
+          setDetail(null);
+          router.refresh();
+        } else {
+          setMessage(final.error ?? "Something went wrong. Please try again.");
+          setDetail(final.detail ?? null);
+        }
+      }
+    } catch {
+      setMessage("Something went wrong. Please try again.");
+    } finally {
+      setPending(false);
+      setProgress(null);
+    }
   };
 
   if (email) {
@@ -67,7 +114,7 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
         title={tried ? "Search the public sources again" : "Look up this person's email"}
       >
         {pending ? (
-          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          <StageIcon stage={progress?.stage ?? null} />
         ) : isError ? (
           <AlertCircle className="h-3 w-3 mr-1 text-red-600" />
         ) : tried ? (
@@ -75,7 +122,7 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
         ) : (
           <Mail className="h-3 w-3 mr-1" />
         )}
-        {pending ? "Looking…" : tried ? "Try again" : "Find email"}
+        {pending ? (progress?.label ?? "Looking…") : tried ? "Try again" : "Find email"}
       </Button>
 
       {!pending && message && (
@@ -99,6 +146,18 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
       )}
     </div>
   );
+}
+
+// The live source indicator: the brand icon of whatever the pipeline is checking
+// right now (Instagram bio → website → YouTube), gently pulsing to read as
+// "working". A small spinner overlaps so motion is visible even on the brand
+// glyphs. Falls back to a plain spinner before the first step arrives.
+function StageIcon({ stage }: { stage: EnrichStage | null }) {
+  const base = "h-3 w-3 mr-1";
+  if (stage === "bio") return <Instagram className={`${base} text-pink-600 animate-pulse`} />;
+  if (stage === "website") return <Globe className={`${base} text-sky-600 animate-pulse`} />;
+  if (stage === "youtube") return <Youtube className={`${base} text-red-600 animate-pulse`} />;
+  return <Loader2 className={`${base} animate-spin`} />;
 }
 
 // On first render we only know the stored status, not a fresh summary, so map

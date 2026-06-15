@@ -2,11 +2,13 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/config/settings";
 import { findYouTubeChannel } from "@/lib/youtube/find";
+import { findYouTubeChannelFromPage } from "@/lib/youtube/from-page";
 import { extractYouTubeChannelUrl } from "@/lib/youtube/channel-url";
 import { attemptYoutubeEmail } from "@/lib/youtube/email-from-channel";
-import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured } from "@/lib/youtube/refresh-cookie";
+import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured, checkYoutubeCookieLive } from "@/lib/youtube/refresh-cookie";
 import { scrapeWebsiteForEmail } from "@/lib/website/scrape-email";
 import { extractEmailFromText } from "@/lib/leads/email-extract";
+import type { EnrichProgress } from "@/lib/pipeline/enrich-progress";
 
 export type EnrichPipelineResult = {
   ok: boolean;
@@ -24,7 +26,13 @@ export type EnrichPipelineResult = {
 export async function enrichLeadPipeline(opts: {
   leadId: string;
   force?: boolean;
+  // Optional live-progress sink. The streaming route passes this to surface each
+  // source as it's checked; the Inngest worker omits it (no UI to update).
+  onStep?: (ev: EnrichProgress) => void;
 }): Promise<EnrichPipelineResult> {
+  const emit = (ev: EnrichProgress) => {
+    try { opts.onStep?.(ev); } catch { /* progress is best-effort, never fatal */ }
+  };
   const sb = createAdminClient();
   const { data: lead } = await sb
     .from("leads")
@@ -56,8 +64,10 @@ export async function enrichLeadPipeline(opts: {
   const steps: string[] = [];
 
   // ── Step 1: email already published in the Instagram bio (free). ──────────
+  emit({ stage: "bio", state: "start", label: "Instagram bio…" });
   const bioEmail = extractEmailFromText(lead.bio as string | null);
   if (bioEmail) {
+    emit({ stage: "bio", state: "hit", label: "Found in bio" });
     return persistAndReturn({
       leadId: opts.leadId,
       patch: {
@@ -79,18 +89,48 @@ export async function enrichLeadPipeline(opts: {
   let ytGoogleCookie = settings.yt_google_cookie || process.env.YT_GOOGLE_COOKIE || "";
 
   const username = (lead.username as string | null) ?? null;
-  const externalLink = (lead.external_link as string | null) ?? null;
+  let externalLink = (lead.external_link as string | null) ?? null;
   const funnelUrl = (lead.funnel_url as string | null) ?? null;
   const fullName = (lead.full_name as string | null) ?? null;
   const tokens = fullName?.trim().split(/\s+/).filter(Boolean) ?? [];
 
+  // Self-heal a missing bio link: many leads never had their IG metadata
+  // backfilled, so external_link is null and there's nothing to follow. If an IG
+  // session cookie is configured, re-fetch just the profile fields (no reels) to
+  // recover the link — that's what holds the Linktree / YouTube button.
+  if (!externalLink && username) {
+    const igCookie =
+      settings.instagram_session_cookie?.trim() ||
+      settings.instagram_session_cookies?.[0]?.trim() ||
+      process.env.INSTAGRAM_SESSION_COOKIE?.trim() ||
+      null;
+    try {
+      const { fetchProfileMetadataDirect } = await import("@/lib/instagram/direct");
+      const meta = await fetchProfileMetadataDirect({ username, sessionCookie: igCookie, skipReels: true });
+      if (meta?.external_link) {
+        externalLink = meta.external_link;
+        steps.push("ig_refetch: recovered bio link");
+        await sb.from("leads").update({ external_link: meta.external_link, bio: meta.bio ?? lead.bio }).eq("id", opts.leadId);
+      } else {
+        steps.push("ig_refetch: no bio link");
+      }
+    } catch (err) {
+      steps.push(`ig_refetch: ${(err as Error).message.slice(0, 60)}`);
+    }
+  }
+
   // ── Step 2: scrape the website linked in their bio / funnel URL (free). ───
+  const hasSite = [externalLink, funnelUrl].some(
+    (u) => u && !extractYouTubeChannelUrl(u) && !u.includes("linkedin.com"),
+  );
+  if (hasSite) emit({ stage: "website", state: "start", label: "Their website…" });
   let websiteScraped = false;
   for (const url of [externalLink, funnelUrl]) {
     if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
     websiteScraped = true;
     const { email: siteEmail, error: siteErr } = await scrapeWebsiteForEmail(url);
     if (siteEmail) {
+      emit({ stage: "website", state: "hit", label: "Found on website" });
       return persistAndReturn({
         leadId: opts.leadId,
         patch: {
@@ -116,9 +156,21 @@ export async function enrichLeadPipeline(opts: {
   let ytAuthFailed = false;
   let ytGatedError: string | null = null;
 
+  emit({ stage: "youtube", state: "start", label: "YouTube channel…" });
   if (!youtubeUrl) {
     youtubeUrl = extractYouTubeChannelUrl(externalLink);
     if (youtubeUrl) steps.push("yt_url: from bio link");
+  }
+  // Follow the link-in-bio (Linktree/Beacons/Stan/personal site) and grab the
+  // YouTube button from it. Higher precision than name-search, so try it first —
+  // it nails creators whose channel handle doesn't match their display name.
+  if (!youtubeUrl) {
+    for (const link of [externalLink, funnelUrl]) {
+      if (!link || extractYouTubeChannelUrl(link) || link.includes("linkedin.com")) continue;
+      const fromPage = await findYouTubeChannelFromPage(link);
+      steps.push(`yt_from_page(${link.slice(0, 40)}): ${fromPage.url ? fromPage.url.slice(0, 40) : fromPage.error}`);
+      if (fromPage.url) { youtubeUrl = fromPage.url; break; }
+    }
   }
   if (!youtubeUrl && serperKey && (tokens.length >= 2 || username)) {
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
@@ -131,23 +183,37 @@ export async function enrichLeadPipeline(opts: {
   }
 
   if (youtubeUrl) {
+    emit({ stage: "youtube", state: "start", label: "YouTube About…" });
     const ytProxy = process.env.YT_REVEAL_PROXY || null;
 
-    // If there's no cookie at all but a login is configured, mint one up front.
-    if (!ytGoogleCookie && youtubeLoginConfigured(settings)) {
-      const minted = await refreshAndSaveYoutubeCookie();
-      if (minted.cookie) {
-        ytGoogleCookie = minted.cookie;
-        steps.push("yt_cookie_refresh: minted");
-      } else {
-        steps.push(`yt_cookie_refresh: ${minted.error}`);
+    // Guarantee we enter the reveal with a LIVE cookie. Probe the stored cookie
+    // up front; if it's missing or logged-out AND a Google login is configured,
+    // sign in and mint a fresh one before spending a captcha solve. "unknown"
+    // (probe couldn't tell — network blip / consent wall) is left alone so a
+    // transient hiccup doesn't trigger a needless re-login; the reactive refresh
+    // below still covers a cookie that dies mid-run.
+    let mintedThisRun = false;
+    if (youtubeLoginConfigured(settings)) {
+      const liveness = ytGoogleCookie ? await checkYoutubeCookieLive(ytGoogleCookie) : "dead";
+      steps.push(`yt_cookie_check: ${ytGoogleCookie ? liveness : "absent"}`);
+      if (liveness === "dead") {
+        const minted = await refreshAndSaveYoutubeCookie();
+        if (minted.cookie) {
+          ytGoogleCookie = minted.cookie;
+          mintedThisRun = true;
+          steps.push("yt_cookie_refresh: minted");
+        } else {
+          steps.push(`yt_cookie_refresh: ${minted.error}`);
+        }
       }
     }
 
     let attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie, capsolverKey, proxy: ytProxy });
 
-    // Cookie rejected as logged-out? Re-mint it and try the channel once more.
-    if (attempt.authFailed && youtubeLoginConfigured(settings)) {
+    // Cookie rejected as logged-out mid-run? Re-mint and retry once — but skip if
+    // we already minted a fresh cookie this run (the cooldown would just hand back
+    // the same one, so a repeat failure is the reveal's problem, not the cookie's).
+    if (attempt.authFailed && youtubeLoginConfigured(settings) && !mintedThisRun) {
       const refreshed = await refreshAndSaveYoutubeCookie();
       if (refreshed.cookie) {
         ytGoogleCookie = refreshed.cookie;
@@ -160,6 +226,7 @@ export async function enrichLeadPipeline(opts: {
 
     steps.push(...attempt.trace);
     if (attempt.email && attempt.provider) {
+      emit({ stage: "youtube", state: "hit", label: "Found on YouTube" });
       return persistAndReturn({
         leadId: opts.leadId,
         patch: {

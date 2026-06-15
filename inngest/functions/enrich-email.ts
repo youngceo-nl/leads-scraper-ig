@@ -7,9 +7,12 @@ export const enrichEmail = inngest.createFunction(
     id: "enrich-email",
     name: "Enrich lead with public email sources",
     retries: 2,
+    // Email enrichment can drive a headless browser (the gated YouTube reveal)
+    // and reuse one shared YouTube/Instagram cookie, so keep parallelism low —
+    // a bulk "find emails for selected" batch must not stampede those resources.
     concurrency: [
-      { limit: 4, key: "event.data.crawl_job_id" },
-      { limit: 8 },
+      { limit: 3, key: "event.data.crawl_job_id" },
+      { limit: 4 },
     ],
   },
   { event: "lead/email.enrich.requested" },

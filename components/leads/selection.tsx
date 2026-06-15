@@ -10,8 +10,9 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Trash2, Loader2, AlertCircle } from "lucide-react";
+import { Trash2, Loader2, AlertCircle, Mail, Check } from "lucide-react";
 import { deleteLeads } from "@/app/actions/leads";
+import { enrichLeadsBulk } from "@/app/actions/enrich";
 
 type Ctx = {
   allIds: string[];
@@ -111,11 +112,28 @@ export function LeadCheckbox({ id }: { id: string }) {
 export function BulkDeleteBar() {
   const { selected, clear } = useContext(SelectionContext);
   const [pending, start] = useTransition();
+  const [enriching, startEnrich] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const router = useRouter();
   const count = selected.size;
 
   if (count === 0) return null;
+
+  const onEnrich = () => {
+    const ids = [...selected];
+    setError(null);
+    setNotice(null);
+    startEnrich(async () => {
+      const r = await enrichLeadsBulk(ids);
+      if (r.ok) {
+        setNotice(`Queued ${r.queued} — emails will appear as they're found. Refresh in a bit.`);
+        router.refresh();
+      } else {
+        setError(r.error ?? "couldn't queue");
+      }
+    });
+  };
 
   const onDelete = () => {
     const ids = [...selected];
@@ -141,7 +159,15 @@ export function BulkDeleteBar() {
       <span className="text-sm font-medium tabular-nums">
         {count} selected
       </span>
-      <Button variant="destructive" size="sm" onClick={onDelete} disabled={pending}>
+      <Button variant="default" size="sm" onClick={onEnrich} disabled={enriching || pending}>
+        {enriching ? (
+          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+        ) : (
+          <Mail className="h-3.5 w-3.5 mr-1.5" />
+        )}
+        {enriching ? "Queuing…" : "Find emails"}
+      </Button>
+      <Button variant="destructive" size="sm" onClick={onDelete} disabled={pending || enriching}>
         {pending ? (
           <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
         ) : (
@@ -149,9 +175,14 @@ export function BulkDeleteBar() {
         )}
         {pending ? "Deleting…" : "Delete selected"}
       </Button>
-      <Button variant="ghost" size="sm" onClick={clear} disabled={pending}>
+      <Button variant="ghost" size="sm" onClick={clear} disabled={pending || enriching}>
         Clear
       </Button>
+      {notice && (
+        <span className="inline-flex items-center gap-1 text-xs text-green-600">
+          <Check className="h-3.5 w-3.5" /> {notice}
+        </span>
+      )}
       {error && (
         <span className="inline-flex items-center gap-1 text-xs text-red-600">
           <AlertCircle className="h-3.5 w-3.5" /> {error}

@@ -46,16 +46,32 @@ export async function revealYoutubeEmail(opts: RevealOpts): Promise<RevealResult
 
   const aboutUrl = channelUrl.replace(/\/+$/, "").replace(/\/about$/i, "") + "/about";
 
-  // Local launch, or a remote/hosted Chromium when BROWSER_WS_ENDPOINT is set.
+  // Local launch (real Chrome when available), or a remote/hosted Chromium when
+  // BROWSER_WS_ENDPOINT is set. Chrome + the stealth flags below make YouTube far
+  // more likely to render the *signed-in* About page for a valid cookie instead
+  // of its logged-out "Sign in to see email address" variant under automation.
   const { browser } = await connectBrowser({
     headless,
     proxy,
+    channel: "chrome",
+    args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"],
     contextOptions: { userAgent: UA, locale: "en-US", viewport: { width: 1280, height: 900 } },
   });
 
   try {
     const context = browser.contexts()[0] ?? (await browser.newContext({ userAgent: UA, locale: "en-US", viewport: { width: 1280, height: 900 } }));
-    await context.addCookies(parseCookies(googleCookie));
+    // Blunt the headless/automation signals before any page script runs — mirrors
+    // the login browser, so a live session isn't downgraded to logged-out.
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+      Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+      (window as unknown as { chrome?: unknown }).chrome ??= { runtime: {} };
+    });
+    const cookieLoad = await addCookiesResilient(context, parseCookies(googleCookie));
+    if (cookieLoad.skipped.length) {
+      console.warn(`[yt-reveal] skipped ${cookieLoad.skipped.length} malformed cookie(s): ${cookieLoad.skipped.join(", ")}`);
+    }
     const page = await context.newPage();
 
     await page.goto(aboutUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
@@ -169,7 +185,41 @@ async function dismissConsent(page: import("playwright").Page): Promise<void> {
   }
 }
 
-type PwCookie = { name: string; value: string; domain: string; path: string; secure: boolean; sameSite: "None" };
+type PwCookie = {
+  name: string;
+  value: string;
+  domain?: string;
+  url?: string;
+  path?: string;
+  secure: boolean;
+  sameSite: "None" | "Lax";
+};
+
+// Chromium rejects an entire addCookies batch if any one cookie has invalid
+// fields (a stale/hand-pasted YT_GOOGLE_COOKIE often carries one). Try the batch
+// first, then fall back to adding cookies one at a time so the valid auth
+// cookies still load and the reveal can proceed instead of dying outright.
+async function addCookiesResilient(
+  context: import("playwright").BrowserContext,
+  cookies: PwCookie[],
+): Promise<{ added: number; skipped: string[] }> {
+  try {
+    await context.addCookies(cookies);
+    return { added: cookies.length, skipped: [] };
+  } catch {
+    const skipped: string[] = [];
+    let added = 0;
+    for (const c of cookies) {
+      try {
+        await context.addCookies([c]);
+        added++;
+      } catch {
+        skipped.push(c.name);
+      }
+    }
+    return { added, skipped };
+  }
+}
 
 function parseCookies(cookieHeader: string): PwCookie[] {
   const pairs = cookieHeader
@@ -180,12 +230,22 @@ function parseCookies(cookieHeader: string): PwCookie[] {
       const i = c.indexOf("=");
       return i === -1 ? null : { name: c.slice(0, i).trim(), value: c.slice(i + 1).trim() };
     })
-    .filter((x): x is { name: string; value: string } => x !== null);
+    .filter((x): x is { name: string; value: string } => x !== null && x.name !== "");
 
   const cookies: PwCookie[] = [];
   for (const { name, value } of pairs) {
-    for (const domain of [".youtube.com", ".google.com"]) {
-      cookies.push({ name, value, domain, path: "/", secure: true, sameSite: "None" });
+    for (const host of ["www.youtube.com", "www.google.com"]) {
+      if (name.startsWith("__Host-")) {
+        // __Host-* cookies are INVALID with a Domain attribute — they must be
+        // host-only (Secure, Path=/, no domain). Set via `url` so Playwright
+        // stores them host-only; attaching a domain makes Chromium reject the
+        // entire addCookies batch with "Invalid cookie fields".
+        cookies.push({ name, value, url: `https://${host}/`, secure: true, sameSite: "Lax" });
+      } else {
+        // Everything else (SID, SAPISID, __Secure-*SID, HSID, SSID, …) is the
+        // real auth set and is fine on a shared parent domain.
+        cookies.push({ name, value, domain: `.${host.replace(/^www\./, "")}`, path: "/", secure: true, sameSite: "None" });
+      }
     }
   }
   return cookies;

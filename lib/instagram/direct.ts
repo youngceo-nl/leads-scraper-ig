@@ -62,6 +62,7 @@ export async function fetchProfileMetadataDirect(opts: {
   username: string;
   sessionCookie?: string | null;
   timeoutMs?: number;
+  skipReels?: boolean; // skip the extra reels fetch when only profile fields are needed
 }): Promise<ProfileMetadata | null> {
   const { username, sessionCookie, timeoutMs = 15_000 } = opts;
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
@@ -154,7 +155,7 @@ export async function fetchProfileMetadataDirect(opts: {
   // Fetch reels separately and merge — reels drive the engagement/activity metric
   // (reels in the last 30 days), so pull enough to cover an active month.
   let reels: RecentPost[] = [];
-  if (opts.sessionCookie && user.id) {
+  if (!opts.skipReels && opts.sessionCookie && user.id) {
     try {
       reels = await fetchReelsDirect({ userId: user.id, sessionCookie: opts.sessionCookie, limit: 12 });
     } catch { /* reels are best-effort */ }

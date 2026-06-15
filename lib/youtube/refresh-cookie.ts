@@ -51,6 +51,39 @@ export function youtubeLoginConfigured(settings?: Partial<SettingsCreds>): boole
   return Boolean(email && password);
 }
 
+// "live"   — the cookie authenticates a signed-in YouTube session
+// "dead"   — the cookie is missing / logged-out / rejected (re-mint needed)
+// "unknown"— couldn't tell (network blip, consent wall); don't force a re-login
+export type CookieLiveness = "live" | "dead" | "unknown";
+
+// Cheap liveness probe used to decide — BEFORE the expensive captcha reveal —
+// whether the stored cookie is still good or must be re-minted via login.
+// A signed-in YouTube homepage embeds `"LOGGED_IN":true` in its bootstrap config
+// (ytcfg); a logged-out one embeds `false`. Plain HTTP GET, no browser/captcha.
+export async function checkYoutubeCookieLive(cookie: string | null | undefined): Promise<CookieLiveness> {
+  if (!cookie || !cookie.trim()) return "dead";
+  try {
+    const res = await fetch("https://www.youtube.com/", {
+      headers: {
+        Cookie: cookie,
+        "User-Agent": UA,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (res.status === 401 || res.status === 403) return "dead";
+    if (!res.ok) return "unknown";
+    const html = await res.text();
+    if (/"(?:LOGGED_IN|logged_in|loggedIn)"\s*:\s*true/.test(html)) return "live";
+    if (/"(?:LOGGED_IN|logged_in|loggedIn)"\s*:\s*false/.test(html)) return "dead";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function resolveCreds(settings?: Partial<SettingsCreds>): LoginCreds | null {
   const email = settings?.yt_google_email || process.env.YT_GOOGLE_EMAIL || "";
   const password = settings?.yt_google_password || process.env.YT_GOOGLE_PASSWORD || "";
