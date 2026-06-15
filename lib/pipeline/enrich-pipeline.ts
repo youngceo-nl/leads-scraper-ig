@@ -50,6 +50,10 @@ export async function enrichLeadPipeline(opts: {
     };
   }
 
+  // Accumulates a one-line trace of every step so the error shown in the UI
+  // tells the user exactly what ran and why each step came up empty.
+  const steps: string[] = [];
+
   // ── Step 1: email already published in the Instagram bio (free). ──────────
   const bioEmail = extractEmailFromText(lead.bio as string | null);
   if (bioEmail) {
@@ -66,6 +70,7 @@ export async function enrichLeadPipeline(opts: {
       result: { ok: true, linkedin_url: existingLinkedin, youtube_url: existingYoutube, email: bioEmail, email_status: "found", source: "ig_bio", error: null },
     });
   }
+  steps.push("bio: none");
 
   const settings = await getSettings();
   const serperKey = settings.serper_api_key || process.env.SERPER_API_KEY || "";
@@ -80,9 +85,11 @@ export async function enrichLeadPipeline(opts: {
   const tokens = fullName?.trim().split(/\s+/).filter(Boolean) ?? [];
 
   // ── Step 2: scrape the website linked in their bio / funnel URL (free). ───
+  let websiteScraped = false;
   for (const url of [externalLink, funnelUrl]) {
     if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
-    const { email: siteEmail } = await scrapeWebsiteForEmail(url);
+    websiteScraped = true;
+    const { email: siteEmail, error: siteErr } = await scrapeWebsiteForEmail(url);
     if (siteEmail) {
       return persistAndReturn({
         leadId: opts.leadId,
@@ -97,27 +104,28 @@ export async function enrichLeadPipeline(opts: {
         result: { ok: true, linkedin_url: existingLinkedin, youtube_url: existingYoutube, email: siteEmail, email_status: "found", source: "website", error: null },
       });
     }
+    steps.push(`website(${url.slice(0, 40)}): ${siteErr ?? "none"}`);
   }
+  if (!websiteScraped) steps.push("website: skipped (no link or is YT/LI)");
 
   // ── Steps 3 & 4: resolve the YouTube channel, then scrape its About page. ──
   let youtubeUrl: string | null = existingYoutube;
   let youtubeError: string | null = null;
 
-  // (a) Free: the channel may already be the IG bio's external_link.
   if (!youtubeUrl) {
     youtubeUrl = extractYouTubeChannelUrl(externalLink);
+    if (youtubeUrl) steps.push("yt_url: from bio link");
   }
-  // (b) Paid SERP: search by full name, or by IG username for single-name leads.
   if (!youtubeUrl && serperKey && (tokens.length >= 2 || username)) {
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
     const lookup = await findYouTubeChannel({ apiKey: serperKey, fullName, username, hints: hint });
     youtubeUrl = lookup.url;
     youtubeError = lookup.error;
+    steps.push(`yt_serper: ${youtubeUrl ? youtubeUrl.slice(0, 50) : (lookup.error ?? "not found")}`);
+  } else if (!youtubeUrl && !serperKey) {
+    steps.push("yt_serper: skipped (no Serper key)");
   }
 
-  // (c) Free: fetch About page with signed-in Google cookie — catches any email
-  //     the creator published openly in their description or links, without any
-  //     CAPTCHA solving.
   if (youtubeUrl && ytGoogleCookie) {
     const cookieScrape = await fetchYouTubeAboutWithCookie({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie });
     if (cookieScrape.email) {
@@ -136,12 +144,14 @@ export async function enrichLeadPipeline(opts: {
         result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: cookieScrape.email, email_status: "found", source: "youtube", error: null },
       });
     }
+    steps.push(`yt_cookie_scrape: ${cookieScrape.error ?? "none"}`);
     youtubeError = youtubeError ?? cookieScrape.error;
+  } else if (youtubeUrl && !ytGoogleCookie) {
+    steps.push("yt_cookie_scrape: skipped (no YT cookie)");
+  } else if (!youtubeUrl) {
+    steps.push("yt_cookie_scrape: skipped (no channel found)");
   }
 
-  // (d) Gated "View email address" reveal via headless Chromium + CapSolver.
-  //     Only fires when both keys are configured. Real Chromium can't run in
-  //     serverless functions — requires local dev, a worker, or BROWSER_WS_ENDPOINT.
   if (youtubeUrl && capsolverKey && ytGoogleCookie) {
     try {
       const { revealYoutubeEmail } = await import("@/lib/youtube/reveal-email");
@@ -167,18 +177,24 @@ export async function enrichLeadPipeline(opts: {
           result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: revealed.email, email_status: "found", source: "youtube", error: null },
         });
       }
+      steps.push(`yt_capsolver: ${revealed.error ?? "none"}`);
       youtubeError = youtubeError ?? revealed.error;
     } catch (err) {
-      youtubeError = youtubeError ?? `reveal_failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`;
+      const msg = (err instanceof Error ? err.message : String(err)).slice(0, 100);
+      steps.push(`yt_capsolver: failed (${msg})`);
+      youtubeError = youtubeError ?? `reveal_failed: ${msg}`;
     }
+  } else if (youtubeUrl && (!capsolverKey || !ytGoogleCookie)) {
+    steps.push(`yt_capsolver: skipped (${!capsolverKey ? "no CapSolver key" : "no YT cookie"})`);
   }
 
   // ── Steps 5 & 6: LinkedIn discovery + AirScale lookup (paid, last resort). ─
   if (!airscaleKey) {
+    const trace = steps.join(" · ") + " · airscale: not configured";
     return persistAndReturn({
       leadId: opts.leadId,
-      patch: { youtube_url: youtubeUrl, youtube_lookup_error: youtubeError, enrichment_error: "AirScale API key not configured" },
-      result: { ok: false, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: null, email_status: "error", source: "skipped", error: "AirScale API key not configured" },
+      patch: { youtube_url: youtubeUrl, youtube_lookup_error: youtubeError, enrichment_error: trace },
+      result: { ok: false, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: null, email_status: "error", source: "skipped", error: trace },
     });
   }
 
@@ -187,14 +203,17 @@ export async function enrichLeadPipeline(opts: {
 
   if (!linkedinUrl) {
     linkedinUrl = extractLinkedInProfileUrl(externalLink);
+    if (linkedinUrl) steps.push("li_url: from bio link");
   }
   if (!linkedinUrl && serperKey && (tokens.length >= 2 || username)) {
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
     const lookup = await findLinkedInUrl({ apiKey: serperKey, fullName, username, hints: hint });
     linkedinUrl = lookup.url;
     linkedinError = lookup.error;
+    steps.push(`li_serper: ${linkedinUrl ? linkedinUrl.slice(0, 50) : (lookup.error ?? "not found")}`);
   } else if (!linkedinUrl && !serperKey) {
     linkedinError = "skipped:no_serper_key";
+    steps.push("li_serper: skipped (no Serper key)");
   }
 
   if (linkedinUrl) {
@@ -225,12 +244,15 @@ export async function enrichLeadPipeline(opts: {
         result: { ok: true, linkedin_url: linkedinUrl, youtube_url: youtubeUrl, email: result.email, email_status: result.email_status, source: "linkedin", error: null },
       });
     }
+    steps.push(`airscale_li: ${result.email_status}`);
     linkedinError = linkedinError ?? `airscale_linkedin:${result.email_status}`;
   }
 
   const inputs = deriveInputs({ full_name: fullName, external_link: lead.external_link as string | null });
   const fallback = await findEmail({ apiKey: airscaleKey, inputs, leadId: opts.leadId });
+  steps.push(`airscale_domain: ${fallback.email_status}`);
 
+  const trace = steps.join(" · ");
   return persistAndReturn({
     leadId: opts.leadId,
     patch: {
@@ -243,7 +265,7 @@ export async function enrichLeadPipeline(opts: {
       email_provider: fallback.email_provider,
       email_verifier: fallback.email_verifier,
       enriched_at: new Date().toISOString(),
-      enrichment_error: fallback.error,
+      enrichment_error: fallback.error ? `${fallback.error} · ${trace}` : trace,
     },
     result: {
       ok: !fallback.error,
@@ -252,7 +274,7 @@ export async function enrichLeadPipeline(opts: {
       email: fallback.email,
       email_status: fallback.email_status,
       source: linkedinUrl ? "linkedin" : "domain",
-      error: fallback.error,
+      error: fallback.error ? `${fallback.error} · ${trace}` : null,
     },
   });
 }

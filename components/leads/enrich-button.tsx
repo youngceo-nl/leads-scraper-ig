@@ -8,14 +8,15 @@ type Props = {
   leadId: string;
   initialEmail: string | null;
   initialStatus: string | null;
+  initialError?: string | null;
   size?: "sm" | "default";
 };
 
-export function EnrichButton({ leadId, initialEmail, initialStatus, size = "sm" }: Props) {
+export function EnrichButton({ leadId, initialEmail, initialStatus, initialError, size = "sm" }: Props) {
   const [pending, start] = useTransition();
   const [email, setEmail] = useState(initialEmail);
   const [status, setStatus] = useState(initialStatus);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
 
   const onClick = () => {
     setError(null);
@@ -24,8 +25,10 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, size = "sm" 
       if (r.ok) {
         setEmail(r.email ?? null);
         setStatus(r.email_status ?? null);
+        setError(null);
       } else {
         setError(r.error ?? "unknown error");
+        setStatus(r.email_status ?? null);
       }
     });
   };
@@ -46,6 +49,11 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, size = "sm" 
   const skipped = status?.startsWith("skipped:");
   const errored = status === "error";
 
+  // Show the first meaningful step from the trace (bio/website/yt_...) as a short label
+  const shortTrace = error
+    ? error.split(" · ").slice(0, 3).join(" · ")
+    : null;
+
   return (
     <div className="flex flex-col gap-1">
       <Button
@@ -53,7 +61,7 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, size = "sm" 
         size={size}
         onClick={onClick}
         disabled={pending}
-        title={skipped ? `Last attempt: ${status}` : errored ? "Last attempt failed — try again" : "Look up this person's email address"}
+        title={error ?? (skipped ? `Last attempt: ${status}` : errored ? "Last attempt failed" : "Look up this person's email")}
       >
         {pending ? (
           <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -64,9 +72,12 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, size = "sm" 
         )}
         {pending ? "Looking…" : errored || error ? "Try again" : "Find email"}
       </Button>
-      {(error || (status && status !== "not_found" && skipped)) && (
-        <span className="text-[10px] text-muted-foreground max-w-[180px] truncate" title={error ?? status ?? ""}>
-          {error ?? status}
+      {shortTrace && (
+        <span
+          className="text-[10px] text-muted-foreground max-w-[200px] truncate cursor-help"
+          title={error ?? ""}
+        >
+          {shortTrace}
         </span>
       )}
     </div>

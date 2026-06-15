@@ -223,6 +223,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       leadId={l.id}
                       initialEmail={l.email ?? null}
                       initialStatus={l.email_status ?? null}
+                      initialError={l.enrichment_error ?? null}
                     />
                   </TableCell>
                   <TableCell>
