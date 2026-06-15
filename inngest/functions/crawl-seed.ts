@@ -98,6 +98,7 @@ export const crawlSeed = inngest.createFunction(
         .update({
           expected_profiles: totalScraped,
           profiles_scraped: totalScraped,
+          new_leads: totalNew,
         })
         .eq("id", crawl_job_id);
     });

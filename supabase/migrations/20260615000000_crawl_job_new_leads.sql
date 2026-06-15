@@ -1,0 +1,2 @@
+ALTER TABLE crawl_jobs
+  ADD COLUMN IF NOT EXISTS new_leads integer NOT NULL DEFAULT 0;

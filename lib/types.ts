@@ -185,6 +185,7 @@ export type CrawlJob = {
   max_depth: number;
   current_depth: number;
   profiles_scraped: number;
+  new_leads: number;
   qualified_count: number;
   rejected_count: number;
   expected_profiles: number | null;

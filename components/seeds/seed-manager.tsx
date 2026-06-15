@@ -6,6 +6,15 @@ import { Input } from "@/components/ui/input";
 import { addSeed, deleteSeed, startCrawl, updateSeedLimit, type ScrapeProvider } from "@/app/actions/seeds";
 import type { Seed } from "@/lib/types";
 
+function friendlyCookieError(msg: string) {
+  const l = msg.toLowerCase();
+  if (l.includes("rate-limited") || l.includes("rate limited"))
+    return "Instagram rate-limited your cookie — wait a few hours or switch to Apify.";
+  if (l.includes("rejected") || l.includes("401") || l.includes("403"))
+    return "Instagram blocked this burner account — remove it in Settings and add a fresh cookie.";
+  return `Last search failed: ${msg}`;
+}
+
 type LatestJob = {
   id: string;
   seed_id: string;
@@ -128,9 +137,7 @@ function SeedRow({
         {lastError && !msg && (
           <p className="text-xs text-destructive flex items-center gap-1 truncate" title={lastError}>
             <AlertCircle className="h-3 w-3 shrink-0" />
-            {lastError.toLowerCase().includes("rate-limited") || lastError.toLowerCase().includes("rate limited")
-              ? "Instagram rate-limited your cookie — wait a few hours or switch to Apify."
-              : `Last search failed: ${lastError}`}
+            {friendlyCookieError(lastError)}
           </p>
         )}
       </div>
@@ -180,6 +187,7 @@ function SeedRow({
         size="sm"
         variant="secondary"
         disabled={pending}
+        
         onClick={() =>
           start(async () => {
             const res = await startCrawl(seed.id, provider);

@@ -18,6 +18,7 @@ type Row = {
   max_depth: number;
   current_depth: number;
   profiles_scraped: number;
+  new_leads: number;
   qualified_count: number;
   rejected_count: number;
   expected_profiles: number | null;
@@ -97,19 +98,31 @@ function JobRow({ job }: { job: Row }) {
           </span>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
-          <span className="tabular-nums">
-            <b>{scraped}</b>
-            {expected > 0 && <span className="text-muted-foreground"> / {expected}</span>}
-            <span className="text-muted-foreground"> accounts checked</span>
-          </span>
-          <span><span className="text-green-600 font-medium">{job.qualified_count}</span> qualified</span>
-          <span><span className="text-red-600 font-medium">{job.rejected_count}</span> not a fit</span>
-          {job.status === "completed" && scraped > 0 && job.qualified_count === 0 && job.rejected_count === 0 && (
-            <span className="text-muted-foreground italic">— all already in your database</span>
-          )}
-          {job.status === "completed" && scraped === 0 && (
-            <span className="text-muted-foreground italic">— nothing scraped</span>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          {scraped > 0 ? (
+            <>
+              <span className="tabular-nums text-muted-foreground">
+                <b className="text-foreground">{scraped}</b> checked
+              </span>
+              <span className="tabular-nums">
+                <b className="text-green-600">{job.new_leads ?? 0}</b>
+                <span className="text-muted-foreground"> new</span>
+              </span>
+              <span className="tabular-nums">
+                <b className="text-muted-foreground">{scraped - (job.new_leads ?? 0)}</b>
+                <span className="text-muted-foreground"> already known</span>
+              </span>
+              {job.qualified_count > 0 && (
+                <span><span className="text-green-600 font-medium">{job.qualified_count}</span> <span className="text-muted-foreground">qualified</span></span>
+              )}
+              {job.rejected_count > 0 && (
+                <span><span className="text-red-600 font-medium">{job.rejected_count}</span> <span className="text-muted-foreground">not a fit</span></span>
+              )}
+            </>
+          ) : (
+            job.status === "completed" && (
+              <span className="text-muted-foreground italic">Nothing scraped</span>
+            )
           )}
         </div>
 

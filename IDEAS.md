@@ -25,6 +25,19 @@
 
 ---
 
+## Seed Discovery from Existing Datapool
+
+**Concept:** Instead of always finding seeds externally, use the leads already in the database. Qualified leads who themselves follow a lot of info operators are good seed accounts — they're already vetted ICP and their following list is likely full of similar profiles.
+
+**How it would work:**
+1. Filter qualified leads with high follower counts and strong ICP score
+2. Suggest them as potential seed accounts with a "Use as seed" button on the lead detail page
+3. One click adds them to Source Accounts and kicks off a scrape
+
+**Why it works:** Bootstraps seed discovery from data already collected — no external search needed, and the quality of the following list is likely high since the account is already ICP-qualified.
+
+---
+
 ## Churn Bucket (No Email Found, ICP Qualified)
 
 **Concept:** Qualified leads where no email could be found get stuck — they're good prospects but can't be reached automatically. Instead of letting them rot, put them in a dedicated view so you can process them manually.
