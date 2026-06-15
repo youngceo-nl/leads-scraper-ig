@@ -35,6 +35,7 @@ type Search = {
   has_email?: string;
   has_linkedin?: string;
   has_youtube?: string;
+  has_outreach?: string;
   sort?: string;
   page?: string;
 };
@@ -77,6 +78,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   if (sp.has_linkedin === "no") q = q.is("linkedin_url", null);
   if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
   if (sp.has_youtube === "no") q = q.is("youtube_url", null);
+  if (sp.has_outreach === "yes") q = q.gt("outreach_count", 0);
+  if (sp.has_outreach === "no") q = q.eq("outreach_count", 0);
 
   const sort = sp.sort ?? "created_at.desc";
   const [col, dir] = sort.split(".");
