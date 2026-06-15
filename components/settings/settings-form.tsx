@@ -43,6 +43,21 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
           <Field label="Claude model" name="claude_model" defaultValue={initial.claude_model} hint="e.g. claude-opus-4-7, claude-sonnet-4-6" />
           <Separator />
           <Field label="AirScale API key (optional)" name="airscale_api_key" defaultValue={initial.airscale_api_key ?? ""} type="password" hint="Used by the per-lead 'Find email' button. Falls back to AIRSCALE_API_KEY env var." />
+          <Field label="CapSolver API key" name="capsolver_api_key" defaultValue={initial.capsolver_api_key ?? ""} type="password" hint="Used to solve reCAPTCHA when revealing gated business emails on YouTube. Falls back to CAPSOLVER_API_KEY env var." />
+          <div className="space-y-1">
+            <label htmlFor="yt_google_cookie" className="text-sm font-medium">YouTube Google session cookie</label>
+            <textarea
+              id="yt_google_cookie"
+              name="yt_google_cookie"
+              defaultValue={initial.yt_google_cookie ?? ""}
+              rows={3}
+              className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
+              placeholder="Paste the full Cookie: header from a logged-in YouTube session"
+            />
+            <p className="text-xs text-muted-foreground">
+              Logged-in Google/YouTube cookie for About-page scraping and gated email reveal. In YouTube, open DevTools, go to Network, click any request, and copy the <code>cookie</code> request header. Falls back to YT_GOOGLE_COOKIE env var.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -94,6 +109,15 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
           <Field label="Max followers" name="max_followers" type="number" defaultValue={String(initial.max_followers)} />
           <Field label="Min engagement rate (e.g. 0.005 = 0.5%)" name="min_engagement_rate" type="number" step="0.0001" defaultValue={String(initial.min_engagement_rate)} />
           <Field label="Min posts last 30 days" name="min_posts_last_30_days" type="number" defaultValue={String(initial.min_posts_last_30_days)} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Gmail (outreach sender)</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <Field label="Gmail address" name="gmail_user" defaultValue={initial.gmail_user ?? ""} hint="The Gmail account used to send outreach. Falls back to GMAIL_USER env var." />
+          <Field label="App password" name="gmail_app_password" defaultValue={initial.gmail_app_password ?? ""} type="password" hint="Generate one at myaccount.google.com → Security → App passwords. Falls back to GMAIL_APP_PASSWORD env var." />
+          <Field label="Sender name (optional)" name="gmail_from_name" defaultValue={initial.gmail_from_name ?? ""} hint={"Shown as the \"From\" name in the recipient's inbox. Falls back to GMAIL_FROM_NAME env var."} />
         </CardContent>
       </Card>
 

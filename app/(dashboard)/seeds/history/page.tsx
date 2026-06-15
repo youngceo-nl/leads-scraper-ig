@@ -43,13 +43,14 @@ export default async function SeedHistoryPage() {
   const seedIds = (activeSeeds ?? []).map((s) => s.id);
   const { data: recentJobs } = seedIds.length > 0
     ? await sb.from("crawl_jobs")
-        .select("seed_id, status, error_message")
+        .select("seed_id, status, error_message, finished_at")
         .in("seed_id", seedIds)
         .order("created_at", { ascending: false })
         .limit(seedIds.length * 3)
     : { data: [] };
 
-  const latestJobBySeed = new Map<string, { status: string; error_message: string | null }>();
+  const RATE_LIMIT_TTL_MS = 2 * 60 * 60 * 1000;
+  const latestJobBySeed = new Map<string, { status: string; error_message: string | null; finished_at: string | null }>();
   for (const j of recentJobs ?? []) {
     if (!latestJobBySeed.has(j.seed_id)) latestJobBySeed.set(j.seed_id, j);
   }
@@ -59,7 +60,10 @@ export default async function SeedHistoryPage() {
     .map(([username, leadCount]) => {
       const seed = activeSeedMap.get(username);
       const latestJob = seed ? latestJobBySeed.get(seed.id) : null;
-      const lastError = latestJob?.status === "failed" ? latestJob.error_message ?? null : null;
+      const rawError = latestJob?.status === "failed" ? latestJob.error_message ?? null : null;
+      const errorAge = latestJob?.finished_at ? Date.now() - new Date(latestJob.finished_at).getTime() : 0;
+      const isRateLimit = rawError ? rawError.toLowerCase().includes("rate-limited") || rawError.toLowerCase().includes("rate limited") : false;
+      const lastError = isRateLimit && errorAge > RATE_LIMIT_TTL_MS ? null : rawError;
       return {
         username,
         leadCount,

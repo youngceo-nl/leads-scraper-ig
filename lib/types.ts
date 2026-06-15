@@ -43,6 +43,11 @@ export type AppSettings = {
   outreach_subject_template: string;
   outreach_body_template: string;
   outreach_reply_to: string | null;
+  gmail_user: string | null;
+  gmail_app_password: string | null;
+  gmail_from_name: string | null;
+  capsolver_api_key: string | null;
+  yt_google_cookie: string | null;
   updated_at: string;
 };
 

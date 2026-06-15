@@ -55,6 +55,11 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     outreach_subject_template: String(formData.get("outreach_subject_template") ?? prev.outreach_subject_template),
     outreach_body_template: String(formData.get("outreach_body_template") ?? prev.outreach_body_template),
     outreach_reply_to: String(formData.get("outreach_reply_to") ?? "") || null,
+    gmail_user: String(formData.get("gmail_user") ?? "") || null,
+    gmail_app_password: String(formData.get("gmail_app_password") ?? "") || null,
+    gmail_from_name: String(formData.get("gmail_from_name") ?? "") || null,
+    capsolver_api_key: String(formData.get("capsolver_api_key") ?? "") || null,
+    yt_google_cookie: String(formData.get("yt_google_cookie") ?? "") || null,
   };
   await updateSettings(patch);
   revalidatePath("/settings");

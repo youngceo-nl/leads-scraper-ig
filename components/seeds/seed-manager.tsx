@@ -15,11 +15,14 @@ function friendlyCookieError(msg: string) {
   return `Last search failed: ${msg}`;
 }
 
+const RATE_LIMIT_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours — matches cookie-pool.ts
+
 type LatestJob = {
   id: string;
   seed_id: string;
   status: string;
   error_message: string | null;
+  finished_at: string | null;
   created_at: string;
 };
 
@@ -116,10 +119,13 @@ function SeedRow({
     (limit === "" ? null : Number(limit)) !==
     (seed.max_profiles_to_scrape ?? null);
 
-  const lastError =
+  const rawError =
     latestJob && latestJob.status === "failed" && latestJob.error_message
       ? latestJob.error_message
       : null;
+  const errorAge = latestJob?.finished_at ? Date.now() - new Date(latestJob.finished_at).getTime() : 0;
+  const isRateLimit = rawError ? rawError.toLowerCase().includes("rate-limited") || rawError.toLowerCase().includes("rate limited") : false;
+  const lastError = isRateLimit && errorAge > RATE_LIMIT_TTL_MS ? null : rawError;
 
   return (
     <div className="flex items-center gap-3 p-3">

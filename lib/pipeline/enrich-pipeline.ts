@@ -5,7 +5,8 @@ import { findLinkedInUrl } from "@/lib/linkedin/find";
 import { extractLinkedInProfileUrl } from "@/lib/linkedin/profile-url";
 import { findYouTubeChannel } from "@/lib/youtube/find";
 import { extractYouTubeChannelUrl } from "@/lib/youtube/channel-url";
-import { findYouTubeChannelEmail } from "@/lib/youtube/about";
+import { fetchYouTubeAboutWithCookie } from "@/lib/youtube/about-cookie";
+import { scrapeWebsiteForEmail } from "@/lib/website/scrape-email";
 import { extractEmailFromText } from "@/lib/leads/email-extract";
 import { deriveInputs, findEmail, findEmailByLinkedInUrl } from "@/lib/airscale/enrich";
 
@@ -15,7 +16,7 @@ export type EnrichPipelineResult = {
   youtube_url: string | null;
   email: string | null;
   email_status: string;
-  source: "cached" | "ig_bio" | "youtube" | "linkedin" | "domain" | "skipped";
+  source: "cached" | "ig_bio" | "website" | "youtube" | "linkedin" | "domain" | "skipped";
   error: string | null;
 };
 
@@ -26,7 +27,7 @@ export async function enrichLeadPipeline(opts: {
   const sb = createAdminClient();
   const { data: lead } = await sb
     .from("leads")
-    .select("id, username, full_name, external_link, email, email_status, linkedin_url, youtube_url, niche, bio")
+    .select("id, username, full_name, external_link, funnel_url, email, email_status, linkedin_url, youtube_url, niche, bio")
     .eq("id", opts.leadId)
     .single();
   if (!lead) {
@@ -67,17 +68,38 @@ export async function enrichLeadPipeline(opts: {
   }
 
   const settings = await getSettings();
-  const scrapingBeeKey = settings.scrapingbee_api_key || process.env.SCRAPINGBEE_API_KEY || "";
   const serperKey = settings.serper_api_key || process.env.SERPER_API_KEY || "";
   const airscaleKey = settings.airscale_api_key || process.env.AIRSCALE_API_KEY || "";
+  const capsolverKey = settings.capsolver_api_key || process.env.CAPSOLVER_API_KEY || "";
+  const ytGoogleCookie = settings.yt_google_cookie || process.env.YT_GOOGLE_COOKIE || "";
 
   const username = (lead.username as string | null) ?? null;
   const externalLink = (lead.external_link as string | null) ?? null;
+  const funnelUrl = (lead.funnel_url as string | null) ?? null;
   const fullName = (lead.full_name as string | null) ?? null;
   const tokens = fullName?.trim().split(/\s+/).filter(Boolean) ?? [];
 
-  // ── Steps 2 & 3: resolve the YouTube channel, then read a plaintext email ──
-  //    off its public About page.
+  // ── Step 2: scrape the website linked in their bio / funnel URL (free). ───
+  for (const url of [externalLink, funnelUrl]) {
+    if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
+    const { email: siteEmail } = await scrapeWebsiteForEmail(url);
+    if (siteEmail) {
+      return persistAndReturn({
+        leadId: opts.leadId,
+        patch: {
+          email: siteEmail,
+          email_status: "found",
+          email_provider: "website_scrape",
+          email_verifier: null,
+          enriched_at: new Date().toISOString(),
+          enrichment_error: null,
+        },
+        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: existingYoutube, email: siteEmail, email_status: "found", source: "website", error: null },
+      });
+    }
+  }
+
+  // ── Steps 3 & 4: resolve the YouTube channel, then scrape its About page. ──
   let youtubeUrl: string | null = existingYoutube;
   let youtubeError: string | null = null;
 
@@ -92,35 +114,34 @@ export async function enrichLeadPipeline(opts: {
     youtubeUrl = lookup.url;
     youtubeError = lookup.error;
   }
-  // (c) Scrape the About page for a plaintext email (needs ScrapingBee).
-  if (youtubeUrl && scrapingBeeKey) {
-    const ytEmail = await findYouTubeChannelEmail({ apiKey: scrapingBeeKey, channelUrl: youtubeUrl });
-    if (ytEmail.email) {
+
+  // (c) Free: fetch About page with signed-in Google cookie — catches any email
+  //     the creator published openly in their description or links, without any
+  //     CAPTCHA solving.
+  if (youtubeUrl && ytGoogleCookie) {
+    const cookieScrape = await fetchYouTubeAboutWithCookie({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie });
+    if (cookieScrape.email) {
       return persistAndReturn({
         leadId: opts.leadId,
         patch: {
           youtube_url: youtubeUrl,
           youtube_lookup_error: null,
-          email: ytEmail.email,
+          email: cookieScrape.email,
           email_status: "found",
           email_provider: "youtube_about",
           email_verifier: null,
           enriched_at: new Date().toISOString(),
           enrichment_error: null,
         },
-        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: ytEmail.email, email_status: "found", source: "youtube", error: null },
+        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: cookieScrape.email, email_status: "found", source: "youtube", error: null },
       });
     }
-    youtubeError = youtubeError ?? ytEmail.error;
+    youtubeError = youtubeError ?? cookieScrape.error;
   }
 
-  // ── Step 3.5: gated "View email address" reveal via headless Chromium +
-  //    CapSolver (runs BEFORE AirScale). Only fires when a CapSolver key and a
-  //    logged-in YouTube cookie are configured. Real Chromium can't run in the
-  //    serverless functions, so this executes only when the pipeline runs
-  //    locally / on a worker, or against a remote browser (BROWSER_WS_ENDPOINT).
-  const capsolverKey = process.env.CAPSOLVER_API_KEY || "";
-  const ytGoogleCookie = process.env.YT_GOOGLE_COOKIE || "";
+  // (d) Gated "View email address" reveal via headless Chromium + CapSolver.
+  //     Only fires when both keys are configured. Real Chromium can't run in
+  //     serverless functions — requires local dev, a worker, or BROWSER_WS_ENDPOINT.
   if (youtubeUrl && capsolverKey && ytGoogleCookie) {
     try {
       const { revealYoutubeEmail } = await import("@/lib/youtube/reveal-email");
@@ -148,12 +169,11 @@ export async function enrichLeadPipeline(opts: {
       }
       youtubeError = youtubeError ?? revealed.error;
     } catch (err) {
-      // Browser unavailable (e.g. serverless) or flow broke — log, keep going.
       youtubeError = youtubeError ?? `reveal_failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`;
     }
   }
 
-  // ── Steps 4 & 5: LinkedIn discovery + AirScale lookup (paid, last resort). ─
+  // ── Steps 5 & 6: LinkedIn discovery + AirScale lookup (paid, last resort). ─
   if (!airscaleKey) {
     return persistAndReturn({
       leadId: opts.leadId,
@@ -165,11 +185,9 @@ export async function enrichLeadPipeline(opts: {
   let linkedinUrl: string | null = existingLinkedin;
   let linkedinError: string | null = null;
 
-  // Step 4a — free: the IG bio's external_link may already be a LinkedIn profile.
   if (!linkedinUrl) {
     linkedinUrl = extractLinkedInProfileUrl(externalLink);
   }
-  // Step 4b — paid SERP: search by full name, or by IG username for single-name leads.
   if (!linkedinUrl && serperKey && (tokens.length >= 2 || username)) {
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
     const lookup = await findLinkedInUrl({ apiKey: serperKey, fullName, username, hints: hint });
@@ -179,7 +197,6 @@ export async function enrichLeadPipeline(opts: {
     linkedinError = "skipped:no_serper_key";
   }
 
-  // Step 5a — AirScale via LinkedIn URL if we have one.
   if (linkedinUrl) {
     const first = tokens[0] ?? null;
     const last = tokens.length >= 2 ? tokens[tokens.length - 1] : null;
@@ -208,11 +225,9 @@ export async function enrichLeadPipeline(opts: {
         result: { ok: true, linkedin_url: linkedinUrl, youtube_url: youtubeUrl, email: result.email, email_status: result.email_status, source: "linkedin", error: null },
       });
     }
-    // LinkedIn AirScale call returned no email — fall through to domain fallback.
     linkedinError = linkedinError ?? `airscale_linkedin:${result.email_status}`;
   }
 
-  // Step 5b — classic name + IG external_link domain.
   const inputs = deriveInputs({ full_name: fullName, external_link: lead.external_link as string | null });
   const fallback = await findEmail({ apiKey: airscaleKey, inputs, leadId: opts.leadId });
 

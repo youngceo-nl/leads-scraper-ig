@@ -1,18 +1,26 @@
 import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
+import { getSettings } from "@/lib/config/settings";
 
-let cachedTransport: Transporter | null = null;
+// Transport is cached per credentials string so a settings change invalidates it.
+let cachedTransport: { key: string; transport: Transporter } | null = null;
 
-function getTransport(): Transporter {
-  if (cachedTransport) return cachedTransport;
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) throw new Error("GMAIL_USER / GMAIL_APP_PASSWORD not configured");
-  cachedTransport = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user, pass: pass.replace(/\s+/g, "") },
-  });
-  return cachedTransport;
+async function getTransport(): Promise<{ transport: Transporter; user: string; fromName: string | null }> {
+  const settings = await getSettings();
+  const user = (settings.gmail_user || process.env.GMAIL_USER || "").trim();
+  const pass = (settings.gmail_app_password || process.env.GMAIL_APP_PASSWORD || "").trim().replace(/\s+/g, "");
+  const fromName = (settings.gmail_from_name || process.env.GMAIL_FROM_NAME || "").trim() || null;
+
+  if (!user || !pass) throw new Error("Gmail credentials not configured — add them in Settings → Outreach.");
+
+  const key = `${user}:${pass}`;
+  if (!cachedTransport || cachedTransport.key !== key) {
+    cachedTransport = {
+      key,
+      transport: nodemailer.createTransport({ service: "gmail", auth: { user, pass } }),
+    };
+  }
+  return { transport: cachedTransport.transport, user, fromName };
 }
 
 export type SendResult = {
@@ -30,12 +38,10 @@ export async function sendEmail(opts: {
   inReplyTo?: string;
   references?: string;
 }): Promise<SendResult> {
-  const t = getTransport();
-  const fromName = process.env.GMAIL_FROM_NAME?.trim();
-  const user = process.env.GMAIL_USER!;
+  const { transport, user, fromName } = await getTransport();
   const from = fromName ? `${fromName} <${user}>` : user;
 
-  const info = await t.sendMail({
+  const info = await transport.sendMail({
     from,
     to: opts.to,
     subject: opts.subject,
@@ -53,7 +59,7 @@ export async function sendEmail(opts: {
 }
 
 export async function verifyTransport(): Promise<boolean> {
-  const t = getTransport();
-  await t.verify();
+  const { transport } = await getTransport();
+  await transport.verify();
   return true;
 }

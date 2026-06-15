@@ -47,3 +47,87 @@
 2. You periodically review these and handle them through your manual outreach flow (DM, comment, etc.)
 
 **Why it works:** Keeps your qualified pipeline clean and makes sure no good lead falls through the cracks just because their email wasn't findable.
+
+
+## being able to see what the scrape is doing (eg. 148 accounts found 140 duplicates 8 new accoutns added to the database)
+
+---
+
+## Efficient & Cheap Lead Analysis
+
+**Context:** The LLM is already only used for classification (niche, business model, offer type) — all numeric scores are computed locally for free. The bottleneck is how many leads unnecessarily reach the LLM.
+
+### Levers (cheapest first):
+
+**1. Tight `include_keywords` (free, biggest impact)**
+If not configured, everything that passes the hard filter hits the LLM. Keeping keywords like "coach, course, info operator, online business" tight is the single highest-leverage cost reduction — no code changes needed.
+
+**2. Metric fast-reject before LLM (free)**
+If all computed metrics are terrible (engagement dead, no posts last 30 days, follower count at the floor), auto-reject without an LLM call. The LLM can't save a dead account. Add a `metricsAutoReject` check before `scoreProfileRouted`.
+
+**3. Bio hash caching (near-free)**
+Many accounts copy-paste the same bio template. Store a `sha256(bio)` → classification result in a DB table. Cache hit = zero LLM cost. Cache miss = normal LLM call + store result.
+
+**4. OpenAI Batch API (50% cheaper)**
+Queue classification calls and submit them via OpenAI's Batch API instead of per-lead real-time calls. Results come back async (up to 24h), but for background enrichment this is fine. Halves LLM cost with no quality change.
+
+**5. Two-tier model routing**
+Use haiku/gpt-4o-mini for obviously borderline cases and a stronger model only when the bio is rich/ambiguous. Simple heuristic: bio length < 50 chars → mini model; longer/more complex → normal model.
+
+## email finder idea
+https://getprospect.readme.io/reference/publicapiemailcontroller_publicfindemail
+
+Het enige wat daar nog aan hoeft te gebeuren is dat er consistent een YouTube session cookie draait en dat hij het remote kan runnen zonder dat je je laptop aan hoeft te houden
+Clay gebruikt deze providers als email finder waterfall: (aan de hand van domein + full name, en soms ook LinkedIn url)
+,
+Findymail, Hunter, Prospeo, Kitt, Datagma, Wiza, Icypeas, Enrow, Leadmagic
+![Dit zijn de inputs om email te vinden via Clay
+De ‘work email”](<Scherm­afbeelding 2026-06-15 om 13.10.23.png>)
+
+Voor ‘personal email’ vinden gebruikt hij deze providers:
+
+rb2b.com
+
+Mixrank
+
+RocketReach
+
+Data Labs
+
+Aviato 
+
+ContactOut
+
+Limadata
+
+Forager
+
+check if deze tools die Clay gebruik niet te duur zijn dat het misschien beter zou zijn om een ander iets te gebruiken
+Een LinkedIn email finder API
+
+---
+
+## YouTube Google Account Strategy (for cookie-based email reveal)
+
+**Context:** The headless Chromium + CapSolver flow needs a logged-in Google/YouTube session cookie. The quality of that account affects how long the cookie stays valid and whether YouTube flags the scraping activity.
+
+### New account vs aged profile
+
+**New account (fresh Gmail)**
+- Free to create, no risk to existing identity
+- YouTube may require phone verification or show more CAPTCHAs for new accounts
+- Higher chance of getting flagged/suspended faster because no watch history, subscriptions, or normal usage patterns
+- Cookie TTL may be shorter (Google refreshes sessions more aggressively for inactive accounts)
+- Good for initial testing — low stakes if it gets banned
+
+**Aged profile (older Gmail with activity)**
+- Google trusts older accounts with established activity more
+- Fewer CAPTCHAs, more stable cookies, longer session TTL
+- Much harder to get flagged for occasional scraping if the account looks like a real user
+- Can buy aged accounts (~$5–20) or use a personal secondary Gmail
+- Long-term this is the better option
+
+**Decision:** Testing with new accounts first. If sessions expire too fast or CAPTCHA rates become a problem, switch to aged accounts. Goal is eventually to run this remotely (server/worker) without needing the laptop on, with a stable long-lived cookie.
+
+**Note:** Store the cookie in Settings UI (yt_google_cookie field), not just .env.local — so it can be refreshed without a server restart.
+
