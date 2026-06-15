@@ -100,8 +100,8 @@ export function LeadsFilterBar({ initial }: { initial: State }) {
           <Input type="number" step="0.1" value={staged.min_engagement ?? ""} placeholder="e.g. 2" onChange={e => set("min_engagement", e.target.value)} />
         </Field>
 
-        <Field label="Min posts last 30d">
-          <Input type="number" value={staged.min_posts_30d ?? ""} placeholder="e.g. 4" onChange={e => set("min_posts_30d", e.target.value)} />
+        <Field label="Min reels last 30d">
+          <Input type="number" value={staged.min_reels_30d ?? ""} placeholder="e.g. 4" onChange={e => set("min_reels_30d", e.target.value)} />
         </Field>
 
         <Field label="Min score">
@@ -183,7 +183,7 @@ export function LeadsFilterBar({ initial }: { initial: State }) {
               <SelectItem value="followers.desc">Followers (high → low)</SelectItem>
               <SelectItem value="followers.asc">Followers (low → high)</SelectItem>
               <SelectItem value="engagement_rate.desc">Engagement (high → low)</SelectItem>
-              <SelectItem value="posts_last_30_days.desc">Posts 30d (most first)</SelectItem>
+              <SelectItem value="reels_last_30_days.desc">Reels 30d (most first)</SelectItem>
               <SelectItem value="created_at.desc">Newest first</SelectItem>
               <SelectItem value="created_at.asc">Oldest first</SelectItem>
               <SelectItem value="username.asc">Username (A → Z)</SelectItem>

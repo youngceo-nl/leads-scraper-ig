@@ -32,13 +32,15 @@ function tractionScore(m: ComputedMetrics): number {
   return 1;
 }
 
+// Activity is driven by reels posted in the last 30 days (the engagement metric).
+// Thresholds are tuned for reel cadence — lower than total-post cadence.
 function activityScore(m: ComputedMetrics): number {
-  const posts30 = m.posts_last_30_days ?? 0;
-  if (posts30 >= 20) return 10;
-  if (posts30 >= 12) return 8.5;
-  if (posts30 >= 6)  return 7;
-  if (posts30 >= 3)  return 5;
-  if (posts30 >= 1)  return 3;
+  const reels30 = m.reels_last_30_days ?? 0;
+  if (reels30 >= 12) return 10;
+  if (reels30 >= 8)  return 8.5;
+  if (reels30 >= 4)  return 7;
+  if (reels30 >= 2)  return 5;
+  if (reels30 >= 1)  return 3;
   return 0;
 }
 
@@ -110,7 +112,7 @@ export function computeScores(args: {
 
   const reason =
     `ER ${metrics.engagement_rate != null ? (metrics.engagement_rate * 100).toFixed(2) + "%" : "—"} → traction ${traction.toFixed(1)}. ` +
-    `Posts 30d: ${metrics.posts_last_30_days ?? 0} → activity ${activity.toFixed(1)}. ` +
+    `Reels 30d: ${metrics.reels_last_30_days ?? 0} → activity ${activity.toFixed(1)}. ` +
     `${classification.has_visible_offer ? "Visible offer" : "No clear offer"} (${classification.offer_confidence}), ` +
     `${classification.business_model} → monetization ${monetization.toFixed(1)}. ` +
     `ICP fit ${icp_fit.toFixed(1)}. Overall ${overall.toFixed(1)} → ${recommended_action}.`;

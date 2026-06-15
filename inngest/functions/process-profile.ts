@@ -69,7 +69,8 @@ export const processProfile = inngest.createFunction(
     const metrics = computeMetrics(profile);
 
     // 4. Metrics gate
-    const gate = metricsGate(metrics, settings, profile.recent_posts.length);
+    const reelSample = profile.recent_posts.filter((p) => p.is_reel).length;
+    const gate = metricsGate(metrics, settings, reelSample);
     if (!gate.ok) {
       await persistLead({
         profile, metrics, score: null,

@@ -7,7 +7,7 @@ const COLS = [
   "username","full_name","profile_url","bio","external_link",
   "followers","following","posts",
   "avg_likes","avg_comments","avg_views","engagement_rate",
-  "posts_last_30_days","activity_status",
+  "posts_last_30_days","reels_last_30_days","activity_status",
   "niche","business_model","offer_type","audience_type",
   "icp_fit_score","traction_score","monetization_score","activity_score","overall_score",
   "reason_for_score","recommended_action",
@@ -43,7 +43,7 @@ export async function GET(req: Request) {
   if (sp.min_followers) q = q.gte("followers", Number(sp.min_followers));
   if (sp.max_followers) q = q.lte("followers", Number(sp.max_followers));
   if (sp.min_engagement) q = q.gte("engagement_rate", Number(sp.min_engagement) / 100);
-  if (sp.min_posts_30d) q = q.gte("posts_last_30_days", Number(sp.min_posts_30d));
+  if (sp.min_reels_30d) q = q.gte("reels_last_30_days", Number(sp.min_reels_30d));
   if (sp.min_score) q = q.gte("overall_score", Number(sp.min_score));
   if (sp.funnel_platform) q = q.eq("funnel_platform", sp.funnel_platform);
   if (sp.has_funnel === "yes") q = q.not("funnel_program_name", "is", null);

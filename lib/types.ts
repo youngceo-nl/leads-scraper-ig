@@ -29,6 +29,7 @@ export type AppSettings = {
   max_followers: number;
   min_engagement_rate: number;
   min_posts_last_30_days: number;
+  min_reels_last_30_days: number;
   include_keywords: string[];
   exclude_keywords: string[];
   following_scraper_provider: "apify" | "scrapingbee" | "cookie" | "auto";
@@ -81,6 +82,7 @@ export type Lead = {
   avg_views: number | null;
   engagement_rate: number | null;
   posts_last_30_days: number | null;
+  reels_last_30_days: number | null;
   activity_status: ActivityStatus | null;
   recent_posts: RecentPost[];
   niche: string | null;

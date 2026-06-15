@@ -35,6 +35,7 @@ export async function persistLead(args: Args) {
     avg_views: args.metrics?.avg_views ?? null,
     engagement_rate: args.metrics?.engagement_rate ?? null,
     posts_last_30_days: args.metrics?.posts_last_30_days ?? null,
+    reels_last_30_days: args.metrics?.reels_last_30_days ?? null,
     activity_status: args.metrics?.activity_status ?? null,
 
     recent_posts: args.profile.recent_posts,

@@ -117,7 +117,7 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
           <Field label="Min followers" name="min_followers" type="number" defaultValue={String(initial.min_followers)} />
           <Field label="Max followers" name="max_followers" type="number" defaultValue={String(initial.max_followers)} />
           <Field label="Min engagement rate (e.g. 0.005 = 0.5%)" name="min_engagement_rate" type="number" step="0.0001" defaultValue={String(initial.min_engagement_rate)} />
-          <Field label="Min posts last 30 days" name="min_posts_last_30_days" type="number" defaultValue={String(initial.min_posts_last_30_days)} />
+          <Field label="Min reels last 30 days" name="min_reels_last_30_days" type="number" defaultValue={String(initial.min_reels_last_30_days ?? 0)} hint="0 = off. Leads are only rejected when we actually captured reels for them." />
         </CardContent>
       </Card>
 

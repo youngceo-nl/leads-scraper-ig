@@ -50,19 +50,19 @@ export function hardFilter(profile: ScrapedProfile, settings: AppSettings): Filt
   return { ok: true };
 }
 
-// A "0 posts in the last 30 days" verdict is only trustworthy when we actually
-// captured enough recent posts to judge. With a tiny sample (e.g. the scrape only
-// returned 1 stale post) the recency count is an artifact of an incomplete scrape,
-// not proven inactivity — hard-rejecting on it discards strong leads. Below this
-// many scraped posts we skip the recency reject and defer to scoring, where low
-// activity simply yields a low activity_score (typically landing in "review").
-const MIN_POST_SAMPLE_FOR_RECENCY = 3;
+// A "0 reels in the last 30 days" verdict is only trustworthy when we actually
+// captured some reels to judge. With no reel sample (e.g. a scraper path that
+// doesn't fetch reels, or an expired cookie) the count is an artifact of an
+// incomplete scrape, not proven inactivity — hard-rejecting on it discards
+// strong leads. Below this many scraped reels we skip the recency reject and
+// defer to scoring, where low activity simply yields a low activity_score.
+const MIN_REEL_SAMPLE_FOR_RECENCY = 3;
 
 // Post-metric gate — applied after metrics computed, still pre-Claude.
 export function metricsGate(
-  metrics: { engagement_rate: number | null; posts_last_30_days: number },
+  metrics: { engagement_rate: number | null; reels_last_30_days: number },
   settings: AppSettings,
-  postSampleSize: number,
+  reelSampleSize: number,
 ): FilterResult {
   if ((metrics.engagement_rate ?? 0) < settings.min_engagement_rate) {
     return {
@@ -71,12 +71,12 @@ export function metricsGate(
     };
   }
   if (
-    postSampleSize >= MIN_POST_SAMPLE_FOR_RECENCY &&
-    metrics.posts_last_30_days < settings.min_posts_last_30_days
+    reelSampleSize >= MIN_REEL_SAMPLE_FOR_RECENCY &&
+    metrics.reels_last_30_days < settings.min_reels_last_30_days
   ) {
     return {
       ok: false,
-      reason: `posts_30d_below_min (${metrics.posts_last_30_days} < ${settings.min_posts_last_30_days})`,
+      reason: `reels_30d_below_min (${metrics.reels_last_30_days} < ${settings.min_reels_last_30_days})`,
     };
   }
   return { ok: true };

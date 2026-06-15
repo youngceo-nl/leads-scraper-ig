@@ -6,6 +6,7 @@ export type ComputedMetrics = {
   avg_views: number | null;
   engagement_rate: number | null;
   posts_last_30_days: number;
+  reels_last_30_days: number;
   activity_status: ActivityStatus;
 };
 
@@ -29,9 +30,11 @@ export function computeMetrics(profile: ScrapedProfile): ComputedMetrics {
     avg_likes != null && profile.followers > 0 ? avg_likes / profile.followers : null;
 
   const posts_last_30_days = countWithin(posts, 30);
-  const activity_status = activityFrom(posts_last_30_days);
+  // Reels are the engagement/activity signal — count only reels in the window.
+  const reels_last_30_days = countWithin(posts.filter((p) => p.is_reel), 30);
+  const activity_status = activityFrom(reels_last_30_days);
 
-  return { avg_likes, avg_comments, avg_views, engagement_rate, posts_last_30_days, activity_status };
+  return { avg_likes, avg_comments, avg_views, engagement_rate, posts_last_30_days, reels_last_30_days, activity_status };
 }
 
 function avg(nums: number[]): number | null {
@@ -48,9 +51,10 @@ function countWithin(posts: RecentPost[], days: number): number {
   }, 0);
 }
 
-function activityFrom(postsIn30: number): ActivityStatus {
-  if (postsIn30 >= 15) return "very_active";
-  if (postsIn30 >= 8)  return "active";
-  if (postsIn30 >= 3)  return "semi_active";
+// Tuned for reel cadence (creators post far fewer reels than total posts).
+function activityFrom(reelsIn30: number): ActivityStatus {
+  if (reelsIn30 >= 12) return "very_active";
+  if (reelsIn30 >= 6)  return "active";
+  if (reelsIn30 >= 2)  return "semi_active";
   return "inactive";
 }

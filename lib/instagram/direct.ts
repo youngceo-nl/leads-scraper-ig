@@ -151,16 +151,19 @@ export async function fetchProfileMetadataDirect(opts: {
       is_pinned: false,
     }));
 
-  // Fetch reels separately and merge — reels are used for engagement rate calculation.
+  // Fetch reels separately and merge — reels drive the engagement/activity metric
+  // (reels in the last 30 days), so pull enough to cover an active month.
   let reels: RecentPost[] = [];
   if (opts.sessionCookie && user.id) {
     try {
-      reels = await fetchReelsDirect({ userId: user.id, sessionCookie: opts.sessionCookie, limit: 6 });
+      reels = await fetchReelsDirect({ userId: user.id, sessionCookie: opts.sessionCookie, limit: 12 });
     } catch { /* reels are best-effort */ }
   }
 
-  // Merge: reels first (for metrics priority), then timeline posts
-  const recent_posts = [...reels, ...timelinePosts].slice(0, 12);
+  // Merge: reels first (preserved for the reel count + metrics), then a few
+  // timeline posts for captions/keyword matching. Widened past the reel limit
+  // so a full month of reels isn't truncated away.
+  const recent_posts = [...reels, ...timelinePosts].slice(0, 18);
 
   return {
     username: user.username.toLowerCase(),
@@ -190,7 +193,7 @@ export async function fetchReelsDirect(opts: {
   sessionCookie: string;
   limit?: number;
 }): Promise<RecentPost[]> {
-  const { userId, sessionCookie, limit = 9 } = opts;
+  const { userId, sessionCookie, limit = 12 } = opts;
   const headers: Record<string, string> = {
     "User-Agent": "Instagram 291.0.0.29.111 Android (30/11; 480dpi; 1080x2137; samsung; SM-G973F; beyond1; exynos9820; en_US; 493494379)",
     "X-IG-App-ID": "936619743392459",
@@ -198,24 +201,40 @@ export async function fetchReelsDirect(opts: {
     "Content-Type": "application/x-www-form-urlencoded",
     "Cookie": sessionCookie,
   };
-  const body = `target_user_id=${userId}&page_size=${Math.min(limit, 9)}&include_feed_video=true`;
 
-  const res = await fetch("https://www.instagram.com/api/v1/clips/user/", {
-    method: "POST",
-    headers,
-    body,
-  });
-  if (!res.ok) return [];
+  const out: RecentPost[] = [];
+  let maxId: string | null = null;
+  let pages = 0;
+  const MAX_PAGES = 4; // page_size is ~9, so this covers the limit with headroom
 
-  let json: { items?: { media?: Record<string, unknown> }[] };
-  try { json = await res.json(); } catch { return []; }
+  while (out.length < limit && pages < MAX_PAGES) {
+    pages++;
+    const params = new URLSearchParams();
+    params.set("target_user_id", userId);
+    params.set("page_size", String(Math.min(limit - out.length, 9)));
+    params.set("include_feed_video", "true");
+    if (maxId) params.set("max_id", maxId);
 
-  return (json.items ?? [])
-    .slice(0, limit)
-    .map((item) => {
+    const res = await fetch("https://www.instagram.com/api/v1/clips/user/", {
+      method: "POST",
+      headers,
+      body: params.toString(),
+    });
+    if (!res.ok) break;
+
+    let json: {
+      items?: { media?: Record<string, unknown> }[];
+      paging_info?: { max_id?: string; more_available?: boolean };
+    };
+    try { json = await res.json(); } catch { break; }
+
+    const items = json.items ?? [];
+    if (items.length === 0) break;
+
+    for (const item of items) {
       const media = item.media ?? {};
       const isPinned = !!(media.is_pinned);
-      return {
+      out.push({
         caption: typeof media.caption === "object" && media.caption !== null
           ? String((media.caption as Record<string, unknown>).text ?? "")
           : null,
@@ -227,8 +246,17 @@ export async function fetchReelsDirect(opts: {
           : null,
         is_reel: true,
         is_pinned: isPinned,
-      };
-    });
+      });
+      if (out.length >= limit) break;
+    }
+
+    const more = json.paging_info?.more_available;
+    maxId = json.paging_info?.max_id ?? null;
+    if (!more || !maxId) break;
+    await sleep(1500); // throttle between reel pages — same IP/cookie as the caller
+  }
+
+  return out.slice(0, limit);
 }
 
 // =============================================================================

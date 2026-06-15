@@ -165,7 +165,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
         <Stat label="Followers" value={formatNumber(l.followers)} />
         <Stat label="Following" value={formatNumber(l.following)} />
         <Stat label="Posts (total)" value={formatNumber(l.posts)} />
-        <Stat label="Posts (30d)" value={String(l.posts_last_30_days ?? "—")} />
+        <Stat label="Reels (30d)" value={String(l.reels_last_30_days ?? "—")} />
         <Stat label="Avg likes" value={formatNumber(l.avg_likes ? Math.round(Number(l.avg_likes)) : null)} />
         <Stat label="Avg comments" value={formatNumber(l.avg_comments ? Math.round(Number(l.avg_comments)) : null)} />
         <Stat label="Avg views" value={formatNumber(l.avg_views ? Math.round(Number(l.avg_views)) : null)} />

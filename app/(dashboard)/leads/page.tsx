@@ -28,7 +28,7 @@ type Search = {
   min_followers?: string;
   max_followers?: string;
   min_engagement?: string;
-  min_posts_30d?: string;
+  min_reels_30d?: string;
   min_score?: string;
   funnel_platform?: string;
   has_funnel?: string;
@@ -67,7 +67,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   if (sp.min_followers) q = q.gte("followers", Number(sp.min_followers));
   if (sp.max_followers) q = q.lte("followers", Number(sp.max_followers));
   if (sp.min_engagement) q = q.gte("engagement_rate", Number(sp.min_engagement) / 100);
-  if (sp.min_posts_30d) q = q.gte("posts_last_30_days", Number(sp.min_posts_30d));
+  if (sp.min_reels_30d) q = q.gte("reels_last_30_days", Number(sp.min_reels_30d));
   if (sp.min_score) q = q.gte("overall_score", Number(sp.min_score));
   if (sp.funnel_platform) q = q.eq("funnel_platform", sp.funnel_platform);
   if (sp.has_funnel === "yes") q = q.not("funnel_program_name", "is", null);
@@ -129,7 +129,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   <HeaderWithTip label="Engagement" tip="Engagement rate — how active their audience is (likes + comments relative to follower count). Higher is better." />
                 </TableHead>
                 <TableHead className="text-right">
-                  <HeaderWithTip label="Posts (30d)" tip="How many times this account posted in the last 30 days." />
+                  <HeaderWithTip label="Reels (30d)" tip="How many reels this account posted in the last 30 days — the engagement signal." />
                 </TableHead>
                 <TableHead className="text-right">
                   <HeaderWithTip label="Score" tip="Overall fit score from 0–10, decided by AI. Higher means a better match for your ideal customer." />
@@ -178,7 +178,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   <TableCell className="text-xs">{l.niche ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(l.followers)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatPct(l.engagement_rate)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{l.posts_last_30_days ?? "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{l.reels_last_30_days ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     <span className={`inline-block px-2 py-0.5 rounded font-semibold tabular-nums ${scoreColor(l.overall_score)}`}>
                       {l.overall_score != null ? Number(l.overall_score).toFixed(1) : "—"}

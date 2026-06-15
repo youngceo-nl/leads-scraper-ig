@@ -78,7 +78,8 @@ export const scoreLead = inngest.createFunction(
     const metrics = computeMetrics(profile);
 
     // Gate 2 — metrics gate (engagement, post frequency)
-    const mg = metricsGate(metrics, settings, profile.recent_posts.length);
+    const reelSample = profile.recent_posts.filter((p) => p.is_reel).length;
+    const mg = metricsGate(metrics, settings, reelSample);
     if (!mg.ok) {
       await step.run("persist-rejected-metrics", async () => {
         const sb = createAdminClient();
@@ -92,6 +93,7 @@ export const scoreLead = inngest.createFunction(
             avg_views: metrics.avg_views,
             engagement_rate: metrics.engagement_rate,
             posts_last_30_days: metrics.posts_last_30_days,
+            reels_last_30_days: metrics.reels_last_30_days,
             activity_status: metrics.activity_status,
           })
           .eq("id", lead_id);
@@ -142,6 +144,7 @@ export const scoreLead = inngest.createFunction(
           avg_views: metrics.avg_views,
           engagement_rate: metrics.engagement_rate,
           posts_last_30_days: metrics.posts_last_30_days,
+          reels_last_30_days: metrics.reels_last_30_days,
           activity_status: metrics.activity_status,
           niche: score.niche,
           business_model: score.business_model,

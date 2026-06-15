@@ -111,6 +111,10 @@ export async function enrichLeadPipeline(opts: {
   // ── Steps 3 & 4: resolve the YouTube channel, then scrape its About page. ──
   let youtubeUrl: string | null = existingYoutube;
   let youtubeError: string | null = null;
+  // Signals from the YouTube attempt that feed a more telling failure message:
+  // whether the session cookie was rejected, and the gated "View email" error.
+  let ytAuthFailed = false;
+  let ytGatedError: string | null = null;
 
   if (!youtubeUrl) {
     youtubeUrl = extractYouTubeChannelUrl(externalLink);
@@ -172,6 +176,15 @@ export async function enrichLeadPipeline(opts: {
       });
     }
     youtubeError = youtubeError ?? attempt.youtubeError;
+    ytAuthFailed = attempt.authFailed;
+    // The gated "View email" reveal logs its own outcome as `yt_capsolver: …`;
+    // pull it out so a cookie/captcha failure isn't masked by the free-scrape
+    // "no email on About" result.
+    const capLine = attempt.trace.find((t) => t.startsWith("yt_capsolver: "));
+    if (capLine) {
+      const v = capLine.slice("yt_capsolver: ".length);
+      if (v !== "found" && v !== "none" && !v.startsWith("skipped")) ytGatedError = v;
+    }
   } else {
     steps.push("yt_cookie_scrape: skipped (no channel found)");
   }
@@ -186,22 +199,51 @@ export async function enrichLeadPipeline(opts: {
   if (websiteScraped) checked.push("the website in their bio");
   if (youtubeUrl) checked.push("their YouTube About page");
 
-  const fixes: string[] = [];
+  // Surface the most actionable problem first. A blocked/misconfigured lookup
+  // is far more useful to the user than a generic "nothing found".
+  const problems: string[] = [];
+
+  // 1) YouTube session cookie is invalid / expired / logged out — the single
+  //    most common reason the gated reveal can't run.
+  const cookieBroken =
+    ytAuthFailed || (!!ytGatedError && /invalid cookie|addcookies|setcookies|not signed in|logged out/i.test(ytGatedError));
+  if (youtubeUrl && cookieBroken) {
+    problems.push(
+      "Your YouTube session cookie looks invalid or expired, so we couldn't open the gated “View email” page. Paste a fresh Cookie header from a logged-in YouTube session in Settings.",
+    );
+  } else if (youtubeUrl && ytGatedError) {
+    // 2) The reveal failed for some other reason (captcha, network, …).
+    problems.push(`The YouTube “View email” reveal failed: ${shorten(ytGatedError)}.`);
+  } else if (youtubeUrl && ytGoogleCookie && !capsolverKey) {
+    // 3) Channel found and cookie present, but no key to solve the captcha that
+    //    guards the email — tell the user how to enable it.
+    problems.push(
+      "This channel hides its email behind YouTube’s “View email” button. Add a CapSolver API key in Settings to reveal it automatically.",
+    );
+  }
+
+  // 4) No YouTube channel could be found because Google search is off.
   if (!youtubeUrl && !serperKey) {
-    fixes.push("To also search Google for their YouTube channel, add a Serper.dev API key in Settings.");
+    problems.push("To search Google for their YouTube channel, add a Serper.dev API key in Settings.");
   }
-  if (youtubeUrl && !ytGoogleCookie && !youtubeLoginConfigured(settings)) {
-    fixes.push("To read emails hidden behind the YouTube “View email” button, add a YouTube session cookie in Settings.");
+  // 5) Channel found but no cookie at all to read the About page.
+  else if (youtubeUrl && !ytGoogleCookie && !youtubeLoginConfigured(settings)) {
+    problems.push("To read emails from YouTube About pages, add a YouTube session cookie in Settings.");
   }
-  if (youtubeError) {
-    fixes.push(`The YouTube lookup ran into a problem: ${youtubeError}.`);
+
+  // 6) The website in their bio couldn't be read (timeout/blocked) — distinct
+  //    from "we read it and there was no email".
+  const siteErr = steps.find((s) => s.startsWith("website(") && !/: (no_email_found|none)$/.test(s));
+  if (siteErr) {
+    const reason = siteErr.replace(/^website\([^)]*\):\s*/, "");
+    problems.push(`We couldn't fully read the website in their bio (${shorten(reason)}).`);
   }
 
   const trace = steps.join(" · ");
   const message =
-    fixes.length > 0
-      ? `No email found yet. ${fixes.join(" ")}`
-      : `No public email found. We checked ${formatList(checked)}, but none of them list one.`;
+    problems.length > 0
+      ? `No email found yet. ${problems.join(" ")}`
+      : `No public email found. We checked ${formatList(checked)}, but none of them publish one.`;
 
   return persistAndReturn({
     leadId: opts.leadId,
@@ -226,6 +268,12 @@ export async function enrichLeadPipeline(opts: {
       detail: trace,
     },
   });
+}
+
+// Trims a raw error fragment to something readable inside a sentence.
+function shorten(reason: string): string {
+  const clean = reason.replace(/\s+/g, " ").trim();
+  return clean.length > 80 ? `${clean.slice(0, 80)}…` : clean;
 }
 
 // Joins a list into a natural-language phrase: "a", "a and b", "a, b, and c".
