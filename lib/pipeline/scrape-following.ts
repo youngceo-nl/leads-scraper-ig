@@ -1,7 +1,8 @@
 import "server-only";
-import { scrapeFollowing as apifyFollowing, scrapeFollowingDetailed as apifyFollowingDetailed, type DiscoveredFollowing } from "@/lib/apify/actors";
+import { scrapeFollowingDetailed as apifyFollowingDetailed, type DiscoveredFollowing } from "@/lib/apify/actors";
 import { scrapeFollowingViaScrapingBee } from "@/lib/scrapingbee/instagram";
-import { fetchFollowingDirect } from "@/lib/instagram/direct";
+import { fetchFollowingDirect, InstagramDirectError } from "@/lib/instagram/direct";
+import { buildCookiePool, markRateLimited } from "@/lib/instagram/cookie-pool";
 import { logError } from "@/lib/pipeline/persist";
 import type { AppSettings } from "@/lib/types";
 
@@ -15,16 +16,29 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
 }): Promise<{ items: DiscoveredFollowing[]; provider: "cookie" | "apify" | "scrapingbee"; nextCursor: string | null }> {
   const { username, settings, apifyToken } = opts;
   const sbKey = settings.scrapingbee_api_key || process.env.SCRAPINGBEE_API_KEY || "";
-  const singleCookie = (settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE || "").trim();
+  const cookiePool = buildCookiePool(settings);
   const provider = settings.following_scraper_provider;
   const limit = opts.limitOverride && opts.limitOverride > 0
     ? opts.limitOverride
     : settings.max_profiles_per_account;
 
-  // 1. Direct cookie fetch (uses a burner-account session cookie via IG's API)
+  // 1. Direct cookie fetch — rotates through all burner accounts, skipping rate-limited ones
   const tryCookie = async () => {
-    if (!singleCookie) throw new Error("IG session cookie not configured");
-    return fetchFollowingDirect({ username, sessionCookie: singleCookie, limit, startCursor: opts.startCursor });
+    if (cookiePool.length === 0) throw new Error("No Instagram session cookies configured");
+    let lastErr: Error | null = null;
+    for (const cookie of cookiePool) {
+      try {
+        return await fetchFollowingDirect({ username, sessionCookie: cookie, limit, startCursor: opts.startCursor });
+      } catch (err) {
+        if (err instanceof InstagramDirectError && err.status === 429) {
+          markRateLimited(cookie);
+          lastErr = err;
+          continue; // try next burner account
+        }
+        throw err;
+      }
+    }
+    throw lastErr ?? new Error("All Instagram cookies rate-limited — wait or switch to Apify");
   };
 
   // 2. Apify actor
@@ -41,7 +55,7 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
       apiKey: sbKey,
       username,
       limit,
-      sessionCookie: singleCookie || null,
+      sessionCookie: cookiePool[0] || null,
     });
     return usernames.slice(0, limit).map((u) => ({
       username: u.toLowerCase(),
@@ -66,7 +80,7 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
   }
 
   // Auto: cookie first, then Apify, then ScrapingBee
-  if (singleCookie) {
+  if (cookiePool.length > 0) {
     try {
       const r = await tryCookie();
       return { items: r.items, provider: "cookie", nextCursor: r.nextCursor };

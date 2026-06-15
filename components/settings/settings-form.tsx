@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { saveSettings } from "@/app/actions/settings";
-import { TestCookieButton } from "@/components/settings/test-cookie-button";
+import { BurnerCookieManager } from "@/components/settings/burner-cookie-manager";
 import type { AppSettings } from "@/lib/types";
 
 export function SettingsForm({ initial }: { initial: AppSettings }) {
@@ -63,13 +63,8 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
             </select>
           </div>
           <div className="space-y-1 col-span-2">
-            <Label className="text-sm">Instagram session cookie (single burner account)</Label>
-            <Textarea name="instagram_session_cookie" defaultValue={initial.instagram_session_cookie ?? ""}
-              placeholder="sessionid=...; ds_user_id=...; csrftoken=...; ig_did=...; mid=..." rows={2} />
-            <p className="text-xs text-muted-foreground">
-              Single burner-account cookie. When set, metadata backfill runs <b>free</b> instead of via Apify.
-            </p>
-            <TestCookieButton />
+            <Label className="text-sm">Burner account cookies</Label>
+            <BurnerCookieManager cookies={initial.instagram_session_cookies ?? []} />
           </div>
         </CardContent>
       </Card>

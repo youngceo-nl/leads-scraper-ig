@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { updateSettings } from "@/lib/config/settings";
+import { getSettings, updateSettings } from "@/lib/config/settings";
 import type { AppSettings } from "@/lib/types";
 
 async function requireUser() {
@@ -59,4 +59,26 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
   await updateSettings(patch);
   revalidatePath("/settings");
   return { ok: true };
+}
+
+export async function addBurnerCookie(cookie: string) {
+  await requireUser();
+  const settings = await getSettings(true);
+  const trimmed = cookie.trim();
+  if (!trimmed) return { error: "Cookie is empty" };
+  const cookies = settings.instagram_session_cookies ?? [];
+  if (cookies.includes(trimmed)) return { error: "Cookie already added" };
+  await updateSettings({ instagram_session_cookies: [...cookies, trimmed] });
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function removeBurnerCookie(index: number) {
+  await requireUser();
+  const settings = await getSettings(true);
+  const cookies = [...(settings.instagram_session_cookies ?? [])];
+  if (index < 0 || index >= cookies.length) return;
+  cookies.splice(index, 1);
+  await updateSettings({ instagram_session_cookies: cookies });
+  revalidatePath("/settings");
 }

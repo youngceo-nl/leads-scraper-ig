@@ -33,6 +33,7 @@ export type AppSettings = {
   exclude_keywords: string[];
   following_scraper_provider: "apify" | "scrapingbee" | "cookie" | "auto";
   instagram_session_cookie: string | null;
+  instagram_session_cookies: string[];
   scoring_provider: "openai" | "claude";
   openai_api_key: string | null;
   openai_model: string;
