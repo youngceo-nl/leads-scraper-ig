@@ -42,11 +42,18 @@ export async function findYouTubeChannel(opts: {
   // surface under the legal name (e.g. "Matthew Ganzak" → channel @mattganzak).
   // Falling back to the IG handle catches those.
   const attempts: string[] = [];
+  // Combined: IG username + full name, no quotes. Most likely to work — catches
+  // creators whose channel handle is based on their username ("adelman.aspires")
+  // while their real name ("Steven Adelman") appears in the channel description.
+  // e.g. `adelman.aspires Steven Adelman site:youtube.com` → @Adelman.Aspires
+  if (username && tokens.length >= 2) {
+    attempts.push(`${username} ${cleanName} site:youtube.com`);
+  }
+  if (username) attempts.push(`"${username}" site:youtube.com`);
   if (tokens.length >= 2) {
     const hint = (opts.hints ?? "").trim().slice(0, 80);
     attempts.push(`"${cleanName}"${hint ? " " + hint : ""} site:youtube.com`);
   }
-  if (username) attempts.push(`"${username}" site:youtube.com`);
 
   const allCandidates: string[] = [];
   for (const query of attempts) {
