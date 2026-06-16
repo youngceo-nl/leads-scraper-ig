@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/config/settings";
 import { findYouTubeChannel } from "@/lib/youtube/find";
+import { inferRealName } from "@/lib/youtube/infer-name";
 import { findYouTubeChannelFromPage } from "@/lib/youtube/from-page";
 import { extractYouTubeChannelUrl } from "@/lib/youtube/channel-url";
 import { attemptYoutubeEmail } from "@/lib/youtube/email-from-channel";
@@ -86,6 +87,7 @@ export async function enrichLeadPipeline(opts: {
   const settings = await getSettings();
   const serperKey = settings.serper_api_key || process.env.SERPER_API_KEY || "";
   const capsolverKey = settings.capsolver_api_key || process.env.CAPSOLVER_API_KEY || "";
+  const openAiKey = settings.openai_api_key || process.env.OPENAI_API_KEY || "";
 
   // Build YT cookie pool: array field first, legacy single field + env var as fallback.
   const ytCookiePool: string[] = [];
@@ -180,8 +182,28 @@ export async function enrichLeadPipeline(opts: {
     }
   }
   if (!youtubeUrl && serperKey && (tokens.length >= 2 || username)) {
+    // When the stored display name is too weak (single token like "Julian" from
+    // "Julian | 1% Better Everyday"), ask GPT-4o-mini to infer the real full
+    // name from the bio + username before running the Serper search. This prevents
+    // wrong search terms like "Julian site:youtube.com" that return nothing useful.
+    let searchName = fullName;
+    if (tokens.length < 2 && openAiKey) {
+      const inferred = await inferRealName({
+        apiKey: openAiKey,
+        username,
+        fullName,
+        bio: lead.bio as string | null,
+      });
+      if (inferred) {
+        searchName = inferred;
+        steps.push(`yt_infer_name: "${inferred}"`);
+      } else {
+        steps.push("yt_infer_name: unknown");
+      }
+    }
+
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
-    const lookup = await findYouTubeChannel({ apiKey: serperKey, fullName, username, hints: hint });
+    const lookup = await findYouTubeChannel({ apiKey: serperKey, fullName: searchName, username, hints: hint });
     youtubeUrl = lookup.url;
     youtubeError = lookup.error;
     steps.push(`yt_serper: ${youtubeUrl ? youtubeUrl.slice(0, 50) : (lookup.error ?? "not found")}`);
