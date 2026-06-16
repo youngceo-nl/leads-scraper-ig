@@ -79,6 +79,21 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     // columns not present yet — ignore
   }
 
+  // Gmail OAuth app credentials (added by the gmail_oauth migration). Only
+  // overwrite when a non-empty value is submitted so saving other settings
+  // never wipes the stored secret. The refresh token is set by the OAuth
+  // callback, not here.
+  try {
+    const oauthPatch: Record<string, string> = {};
+    const cid = String(formData.get("gmail_oauth_client_id") ?? "").trim();
+    const secret = String(formData.get("gmail_oauth_client_secret") ?? "").trim();
+    if (cid) oauthPatch.gmail_oauth_client_id = cid;
+    if (secret) oauthPatch.gmail_oauth_client_secret = secret;
+    if (Object.keys(oauthPatch).length > 0) await updateSettings(oauthPatch);
+  } catch {
+    // columns not present yet — ignore
+  }
+
   revalidatePath("/settings");
   return { ok: true };
 }

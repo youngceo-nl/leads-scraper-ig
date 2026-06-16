@@ -61,6 +61,10 @@ export type AppSettings = {
   gmail_user: string | null;
   gmail_app_password: string | null;
   gmail_from_name: string | null;
+  gmail_oauth_client_id: string | null;
+  gmail_oauth_client_secret: string | null;
+  gmail_oauth_refresh_token: string | null;
+  gmail_oauth_email: string | null;
   capsolver_api_key: string | null;
   yt_google_cookie: string | null;
   yt_google_cookies: string[];

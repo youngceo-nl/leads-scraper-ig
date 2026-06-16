@@ -1,30 +1,15 @@
 import "server-only";
-import nodemailer, { type Transporter } from "nodemailer";
 import { getSettings } from "@/lib/config/settings";
+import { gmailSend } from "@/lib/google/gmail-api";
+import { gmailOAuthConfigured } from "@/lib/google/oauth";
 
-// Transport is cached per credentials string so a settings change invalidates it.
-let cachedTransport: { key: string; transport: Transporter } | null = null;
-
-async function getTransport(): Promise<{ transport: Transporter; user: string; fromName: string | null }> {
-  const settings = await getSettings();
-  const user = (settings.gmail_user || process.env.GMAIL_USER || "").trim();
-  const pass = (settings.gmail_app_password || process.env.GMAIL_APP_PASSWORD || "").trim().replace(/\s+/g, "");
-  const fromName = (settings.gmail_from_name || process.env.GMAIL_FROM_NAME || "").trim() || null;
-
-  if (!user || !pass) throw new Error("Gmail credentials not configured — add them in Settings → Outreach.");
-
-  const key = `${user}:${pass}`;
-  if (!cachedTransport || cachedTransport.key !== key) {
-    cachedTransport = {
-      key,
-      transport: nodemailer.createTransport({ service: "gmail", auth: { user, pass } }),
-    };
-  }
-  return { transport: cachedTransport.transport, user, fromName };
-}
+// Outreach sending via the Gmail API (OAuth, gmail.send scope). Replaces the
+// old SMTP app-password transport: that credential could read the whole inbox
+// over IMAP; the OAuth send scope cannot read any mail at all.
 
 export type SendResult = {
-  messageId: string;
+  messageId: string;          // RFC Message-Id header (used to match replies)
+  threadId: string;           // Gmail thread id (reply polling fetches only these)
   accepted: string[];
   rejected: string[];
 };
@@ -37,29 +22,32 @@ export async function sendEmail(opts: {
   replyTo?: string;
   inReplyTo?: string;
   references?: string;
+  threadId?: string;
 }): Promise<SendResult> {
-  const { transport, user, fromName } = await getTransport();
-  const from = fromName ? `${fromName} <${user}>` : user;
+  const settings = await getSettings();
+  const fromName = (settings.gmail_from_name || process.env.GMAIL_FROM_NAME || "").trim() || null;
 
-  const info = await transport.sendMail({
-    from,
+  const r = await gmailSend({
     to: opts.to,
     subject: opts.subject,
     text: opts.text,
     html: opts.html,
+    fromName,
     replyTo: opts.replyTo,
     inReplyTo: opts.inReplyTo,
     references: opts.references,
+    threadId: opts.threadId,
   });
+
   return {
-    messageId: info.messageId,
-    accepted: info.accepted as string[],
-    rejected: info.rejected as string[],
+    messageId: r.rfcMessageId ?? r.messageId,
+    threadId: r.threadId,
+    accepted: [opts.to],
+    rejected: [],
   };
 }
 
-export async function verifyTransport(): Promise<boolean> {
-  const { transport } = await getTransport();
-  await transport.verify();
-  return true;
+// True when the Gmail OAuth app is connected and ready to send.
+export async function gmailReady(): Promise<boolean> {
+  return gmailOAuthConfigured(await getSettings());
 }

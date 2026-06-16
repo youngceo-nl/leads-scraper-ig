@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/config/settings";
-import { sendEmail } from "@/lib/outreach/gmail";
+import { sendEmail, gmailReady } from "@/lib/outreach/gmail";
 import { renderTemplate, buildLeadContext, textToHtml } from "@/lib/outreach/template";
 
 export type RenderedOutreach = {
@@ -58,8 +58,8 @@ export async function sendOutreach(opts: {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "unauthorized" };
 
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    return { ok: false, error: "Gmail SMTP not configured (GMAIL_USER / GMAIL_APP_PASSWORD)." };
+  if (!(await gmailReady())) {
+    return { ok: false, error: "Gmail not connected — set up the OAuth app and click “Connect Gmail” in Settings → Outreach." };
   }
 
   const { settings, lead } = await loadLeadAndSettings(opts.leadId);
@@ -91,6 +91,7 @@ export async function sendOutreach(opts: {
       body_html: bodyHtml,
       status: "sent",
       message_id: result.messageId,
+      gmail_thread_id: result.threadId,
       sent_by: user.id,
     });
 

@@ -2,7 +2,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchInboxMessages } from "@/lib/inbox/imap";
+import { getSettings } from "@/lib/config/settings";
+import { gmailOAuthConfigured } from "@/lib/google/oauth";
+import { gmailGetThread, gmailGetMessage, gmailSearch, type ThreadMessage } from "@/lib/google/gmail-api";
 
 export type SyncInboxResponse = {
   ok: boolean;
@@ -11,86 +13,123 @@ export type SyncInboxResponse = {
   error?: string;
 };
 
-// Normalise a Message-ID for comparison: strip <>, trim, lowercase.
-const normId = (s: string | null | undefined): string =>
-  (s || "").trim().replace(/^<+|>+$/g, "").toLowerCase();
+type Owner = { lead_id: string; outreach_id: string; thread_id: string | null };
 
-// Pull recent INBOX mail and persist ONLY messages that are replies to an
-// outreach we actually sent. Matching is, in priority order:
-//   1. The reply's In-Reply-To / References headers point at the Message-ID of
-//      one of our sent outreach emails (definitive — it's a threaded reply).
-//   2. Fallback: the sender address equals an address we sent outreach to.
-// Anything that matches neither is ignored and never stored.
+// Normalize an RFC Message-Id for comparison: drop angle brackets, lowercase.
+const normId = (id: string) => id.replace(/[<>]/g, "").trim().toLowerCase();
+
+// Pull every reply to outreach we sent. Two passes, deduped by message id:
+//   1) thread pass  — fetch each Gmail thread we recorded at send time.
+//   2) search pass  — query the mailbox for inbound mail FROM the addresses we
+//      emailed; this catches replies Gmail re-threaded (new subject, broken
+//      threading) or in threads we never recorded. The search is scoped to
+//      contacted addresses, so unrelated personal mail is never read.
+// Each candidate is matched to its lead by thread → In-Reply-To/References →
+// sender address.
 export async function syncInbox(): Promise<SyncInboxResponse> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "unauthorized" };
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    return { ok: false, error: "Gmail not configured (GMAIL_USER / GMAIL_APP_PASSWORD)." };
+
+  const settings = await getSettings();
+  if (!gmailOAuthConfigured(settings)) {
+    return { ok: false, error: "Gmail not connected — connect it in Settings → Outreach." };
   }
+  const ourEmail = (settings.gmail_oauth_email || "").toLowerCase();
 
   const admin = createAdminClient();
 
-  // Build lookup maps from every outreach email we've sent.
+  // Every outreach we sent — newest first so the most recent send "owns" a
+  // repeated address / thread when building the lookup maps.
   const { data: sends } = await admin
     .from("outreach_messages")
-    .select("id, lead_id, message_id, to_email")
-    .eq("status", "sent");
+    .select("id, lead_id, gmail_thread_id, message_id, to_email, sent_at")
+    .eq("status", "sent")
+    .order("sent_at", { ascending: false });
 
-  const byMsgId = new Map<string, { lead_id: string; outreach_id: string }>();
-  const byEmail = new Map<string, { lead_id: string; outreach_id: string }>();
+  // Owner lookup maps: by thread id, by our sent Message-Id, and by recipient.
+  const threadOwner = new Map<string, Owner>();
+  const msgidOwner = new Map<string, Owner>();
+  const emailOwner = new Map<string, Owner>();
   for (const s of sends ?? []) {
-    if (s.message_id) byMsgId.set(normId(s.message_id), { lead_id: s.lead_id, outreach_id: s.id });
-    if (s.to_email) byEmail.set(s.to_email.toLowerCase(), { lead_id: s.lead_id, outreach_id: s.id });
+    const owner: Owner = { lead_id: s.lead_id, outreach_id: s.id, thread_id: s.gmail_thread_id ?? null };
+    if (s.gmail_thread_id && !threadOwner.has(s.gmail_thread_id)) threadOwner.set(s.gmail_thread_id, owner);
+    if (s.message_id && !msgidOwner.has(normId(s.message_id))) msgidOwner.set(normId(s.message_id), owner);
+    const to = (s.to_email || "").toLowerCase();
+    if (to && !emailOwner.has(to)) emailOwner.set(to, owner);
   }
-  // Nothing sent yet → nothing could be a reply. Don't even open the mailbox.
-  if (byMsgId.size === 0 && byEmail.size === 0) return { ok: true, new_replies: 0, scanned: 0 };
+  if ((sends ?? []).length === 0) return { ok: true, new_replies: 0, scanned: 0 };
 
-  // Only scan since the newest reply we already have (with a 1-day overlap),
-  // else a 30-day window on first run. Keeps each sync fast.
-  const { data: lastRow } = await admin
-    .from("inbox_messages")
-    .select("received_at")
-    .order("received_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const since = lastRow?.received_at
-    ? new Date(new Date(lastRow.received_at).getTime() - 86_400_000)
-    : null;
+  const resolveOwner = (m: ThreadMessage): Owner | null => {
+    if (m.threadId && threadOwner.has(m.threadId)) return threadOwner.get(m.threadId)!;
+    const refs = `${m.inReplyTo ?? ""} ${m.references ?? ""}`.match(/<[^>]+>/g) ?? [];
+    for (const id of refs) {
+      const o = msgidOwner.get(normId(id));
+      if (o) return o;
+    }
+    const from = (m.fromEmail || "").toLowerCase();
+    if (from && emailOwner.has(from)) return emailOwner.get(from)!;
+    return null;
+  };
 
-  let fetched;
-  try {
-    fetched = await fetchInboxMessages({ since, sinceDays: 30, limit: 300 });
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  // ── Collect candidate messages (deduped by Gmail message id). ──
+  const candidates = new Map<string, ThreadMessage>();
+
+  // Pass 1: threads we recorded.
+  for (const threadId of threadOwner.keys()) {
+    try {
+      for (const m of await gmailGetThread(threadId)) {
+        if (m.gmailMessageId) candidates.set(m.gmailMessageId, m);
+      }
+    } catch {
+      continue; // a single bad thread shouldn't abort the whole sync
+    }
+  }
+
+  // Pass 2: search the mailbox for inbound mail from the addresses we contacted.
+  // Batch addresses into one query each (Gmail caps query length); include spam
+  // and archived mail, exclude trash.
+  const emails = [...emailOwner.keys()];
+  for (let i = 0; i < emails.length; i += 20) {
+    const batch = emails.slice(i, i + 20);
+    const q = `from:(${batch.join(" OR ")}) in:anywhere -in:trash`;
+    let ids: string[] = [];
+    try {
+      ids = await gmailSearch(q, 300);
+    } catch {
+      continue;
+    }
+    for (const id of ids) {
+      if (candidates.has(id)) continue;
+      try {
+        const m = await gmailGetMessage(id);
+        if (m?.gmailMessageId) candidates.set(m.gmailMessageId, m);
+      } catch {
+        /* skip a single unreadable message */
+      }
+    }
   }
 
   const affectedLeads = new Set<string>();
   let inserted = 0;
+  let scanned = 0;
 
-  for (const m of fetched) {
-    // 1. Header match against our sent message-ids.
-    let match: { lead_id: string; outreach_id: string | null } | null = null;
-    for (const ref of [m.inReplyTo, ...m.references]) {
-      const hit = byMsgId.get(normId(ref));
-      if (hit) { match = { lead_id: hit.lead_id, outreach_id: hit.outreach_id }; break; }
-    }
-    // 2. Fallback: sender is someone we emailed.
-    if (!match && m.fromEmail) {
-      const hit = byEmail.get(m.fromEmail.toLowerCase());
-      if (hit) match = { lead_id: hit.lead_id, outreach_id: hit.outreach_id };
-    }
-    if (!match) continue; // NOT outreach-related → skip entirely.
+  for (const m of candidates.values()) {
+    scanned++;
+    const from = (m.fromEmail || "").toLowerCase();
+    // Our own outgoing messages aren't replies.
+    if (!from || from === ourEmail) continue;
+    const owner = resolveOwner(m);
+    if (!owner) continue; // not tied to any outreach we sent
 
     const snippet = (m.text || "").replace(/\s+/g, " ").trim().slice(0, 200);
     const { data: row, error } = await admin
       .from("inbox_messages")
       .upsert(
         {
-          lead_id: match.lead_id,
-          outreach_message_id: match.outreach_id,
-          gmail_message_id: m.messageId,
-          imap_uid: m.uid,
+          lead_id: owner.lead_id,
+          outreach_message_id: owner.outreach_id,
+          gmail_message_id: m.rfcMessageId ?? m.gmailMessageId,
           from_email: m.fromEmail,
           from_name: m.fromName,
           subject: m.subject,
@@ -106,7 +145,13 @@ export async function syncInbox(): Promise<SyncInboxResponse> {
       .maybeSingle();
     if (!error && row) {
       inserted++;
-      affectedLeads.add(match.lead_id);
+      affectedLeads.add(owner.lead_id);
+      // Backfill the thread id on the owning outreach when we learned it from a
+      // re-threaded reply, so future thread-pass syncs find it directly.
+      if (!owner.thread_id && m.threadId) {
+        owner.thread_id = m.threadId;
+        await admin.from("outreach_messages").update({ gmail_thread_id: m.threadId }).eq("id", owner.outreach_id);
+      }
     }
   }
 
@@ -131,7 +176,7 @@ export async function syncInbox(): Promise<SyncInboxResponse> {
 
   revalidatePath("/inbox");
   revalidatePath("/leads");
-  return { ok: true, new_replies: inserted, scanned: fetched.length };
+  return { ok: true, new_replies: inserted, scanned };
 }
 
 export async function markReplyRead(id: string, read = true): Promise<{ ok: boolean }> {

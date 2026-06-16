@@ -172,9 +172,34 @@ export function SettingsForm({
         <Card>
           <CardHeader><CardTitle>Gmail (outreach sender)</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <Field label="Gmail address" name="gmail_user" defaultValue={initial.gmail_user ?? ""} hint="The Gmail account used to send outreach. Falls back to GMAIL_USER env var." />
-            <Field label="App password" name="gmail_app_password" defaultValue={initial.gmail_app_password ?? ""} type="password" hint="Generate one at myaccount.google.com → Security → App passwords. Falls back to GMAIL_APP_PASSWORD env var." />
-            <Field label="Sender name (optional)" name="gmail_from_name" defaultValue={initial.gmail_from_name ?? ""} hint={"Shown as the \"From\" name in the recipient's inbox. Falls back to GMAIL_FROM_NAME env var."} />
+            <p className="text-xs text-muted-foreground leading-snug">
+              Connect Gmail with a one-time OAuth app. The app sends with the <code>gmail.send</code> scope
+              and only reads the threads it created — it never lists or searches your inbox. Paste your
+              Google Cloud OAuth credentials, <strong>Save</strong>, then click Connect.
+            </p>
+            <Field label="OAuth Client ID" name="gmail_oauth_client_id" defaultValue={initial.gmail_oauth_client_id ?? ""} hint="From Google Cloud → Credentials → OAuth client ID (Web application)." />
+            <Field
+              label="OAuth Client Secret"
+              name="gmail_oauth_client_secret"
+              defaultValue=""
+              type="password"
+              hint={initial.gmail_oauth_client_secret ? "A secret is saved — leave blank to keep it, or paste a new one to replace." : "From the same OAuth client. Stored in the database, never exposed to the browser."}
+            />
+            <Field label="Sender name (optional)" name="gmail_from_name" defaultValue={initial.gmail_from_name ?? ""} hint={"Shown as the \"From\" name in the recipient's inbox."} />
+
+            <div className="flex items-center gap-3 pt-1">
+              {initial.gmail_oauth_email ? (
+                <span className="text-xs font-medium text-green-600">✓ Connected as {initial.gmail_oauth_email}</span>
+              ) : (
+                <span className="text-xs font-medium text-amber-600">Not connected</span>
+              )}
+              <a
+                href="/api/google/oauth/start"
+                className="inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+              >
+                {initial.gmail_oauth_email ? "Reconnect Gmail" : "Connect Gmail"}
+              </a>
+            </div>
           </CardContent>
         </Card>
 

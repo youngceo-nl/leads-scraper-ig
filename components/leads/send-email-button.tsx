@@ -1,11 +1,12 @@
 "use client";
 import { useState, useTransition } from "react";
-import { Send, Loader2, AlertCircle, Check, X } from "lucide-react";
+import { Send, Loader2, AlertCircle, Check, X, Pencil, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { previewOutreach, sendOutreach } from "@/app/actions/outreach";
+import { textToHtml } from "@/lib/outreach/template";
 
 type Props = {
   leadId: string;
@@ -24,10 +25,15 @@ export function SendEmailButton({ leadId, hasEmail, outreachCount, size = "sm" }
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState<string | null>(null);
   const [sent, setSent] = useState(outreachCount > 0);
+  // Body editor view: raw text ("edit") vs the rendered HTML the recipient
+  // gets ("preview"). Preview uses the SAME textToHtml() the send path applies,
+  // so what you see is exactly what is sent.
+  const [bodyView, setBodyView] = useState<"edit" | "preview">("edit");
 
   const openDialog = async () => {
     setError(null);
     setReason(null);
+    setBodyView("edit");
     setOpen(true);
     setLoadingPreview(true);
     try {
@@ -109,8 +115,42 @@ export function SendEmailButton({ leadId, hasEmail, outreachCount, size = "sm" }
                   <Input id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="body" className="text-xs">Body</Label>
-                  <Textarea id="body" value={body} onChange={(e) => setBody(e.target.value)} rows={10} className="font-mono text-sm" />
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="body" className="text-xs">Body</Label>
+                    <div className="inline-flex rounded-md border p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setBodyView("edit")}
+                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 ${bodyView === "edit" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                      >
+                        <Pencil className="h-3 w-3" /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBodyView("preview")}
+                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 ${bodyView === "preview" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                      >
+                        <Eye className="h-3 w-3" /> Preview
+                      </button>
+                    </div>
+                  </div>
+                  {bodyView === "edit" ? (
+                    <Textarea id="body" value={body} onChange={(e) => setBody(e.target.value)} rows={10} className="font-mono text-sm" />
+                  ) : (
+                    // Renders the exact HTML produced by textToHtml() at send time.
+                    // The body is plain text that textToHtml escapes, so the only
+                    // markup here is the <p>/<br> it adds — safe to render.
+                    <div className="rounded border bg-white">
+                      <div className="border-b px-4 py-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{subject || "(no subject)"}</span>
+                        <span className="ml-2">to {to || "(no recipient)"}</span>
+                      </div>
+                      <div
+                        className="px-4 py-3 text-sm text-black [&_p]:my-2 [&_a]:text-blue-600 [&_a]:underline min-h-[180px]"
+                        dangerouslySetInnerHTML={{ __html: textToHtml(body) }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {error && (

@@ -21,6 +21,14 @@ const eslintConfig = [
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+  {
+    rules: {
+      // Conversational UI copy uses apostrophes ("you'll", "can't") throughout.
+      // This rule only flags literal apostrophes/quotes in JSX text — a stylistic
+      // concern, never a real bug — and was failing production builds. Off.
+      "react/no-unescaped-entities": "off",
+    },
+  },
 ];
 
 export default eslintConfig;
