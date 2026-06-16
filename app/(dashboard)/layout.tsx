@@ -1,14 +1,14 @@
 import Link from "next/link";
-import { LayoutDashboard, Users, Settings, ScrollText, Sprout, LogOut, Gauge, CreditCard, Inbox, ArchiveX } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Sprout, LogOut, Gauge, CreditCard, Inbox, ArchiveX } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ActivityDrawerButton } from "@/components/logs/activity-drawer";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/seeds", label: "Source Accounts", icon: Sprout },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/inbox", label: "Inbox", icon: Inbox },
-  { href: "/logs", label: "Activity", icon: ScrollText },
   { href: "/usage", label: "Usage", icon: Gauge },
   { href: "/billing", label: "Costs", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -44,6 +44,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
               {item.label}
             </Link>
           ))}
+
+          {/* Activity — opens a live slide-out drawer instead of navigating away */}
+          <ActivityDrawerButton />
 
           {/* Churn bucket — separate so we can show the live count badge */}
           <Link

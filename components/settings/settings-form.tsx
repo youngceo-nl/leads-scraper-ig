@@ -12,6 +12,7 @@ import { saveSettings, removeManagedAccount } from "@/app/actions/settings";
 import { BurnerCookieManager } from "@/components/settings/burner-cookie-manager";
 import { YtCookieManager } from "@/components/settings/yt-cookie-manager";
 import { ManagedAccountManager } from "@/components/settings/managed-account-manager";
+import { BodyEditor } from "@/components/settings/body-editor";
 import type { AppSettings, ManagedAccountDisplay } from "@/lib/types";
 import type { CookieLiveness } from "@/lib/youtube/refresh-cookie";
 
@@ -92,6 +93,7 @@ export function SettingsForm({
             <Field label="Claude model" name="claude_model" defaultValue={initial.claude_model} hint="e.g. claude-opus-4-7, claude-sonnet-4-6" />
             <Separator />
             <Field label="CapSolver API key" name="capsolver_api_key" defaultValue={initial.capsolver_api_key ?? ""} type="password" hint="Solves reCAPTCHA when revealing gated business emails on YouTube. Falls back to CAPSOLVER_API_KEY env var." />
+            <Field label="Hunter.io API key (optional)" name="hunter_api_key" defaultValue={initial.hunter_api_key ?? ""} type="password" hint="Domain + name email lookup. Free tier: 25 searches/month. Falls back to HUNTER_API_KEY env var. Leave blank to use our free DNS-based inference instead." />
           </CardContent>
         </Card>
 
@@ -214,14 +216,13 @@ export function SettingsForm({
             />
             <div className="space-y-1">
               <Label className="text-sm">Body</Label>
-              <Textarea
+              <BodyEditor
                 name="outreach_body_template"
                 defaultValue={initial.outreach_body_template}
-                rows={8}
-                className="font-mono text-sm"
+                rows={10}
               />
               <p className="text-xs text-muted-foreground">
-                Same placeholders. Use <code>{"{{first_name|there}}"}</code> for a fallback. You can also edit subject/body per-lead before sending.
+                Same placeholders as subject. Use <code>{"{{first_name|there}}"}</code> for a fallback. You can also edit subject/body per-lead before sending.
               </p>
             </div>
             <Field

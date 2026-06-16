@@ -216,6 +216,104 @@ export async function retryFunnelEnrichment(
   return { ok: true, queued: rows.length, results };
 }
 
+// Fan out score events for all leads that have bio data, bypassing the
+// skip guard. Useful after updating the scoring weights or AI prompt.
+// Inngest handles concurrency (16 global, 8 per crawl_job).
+export async function rescoreAllLeads(
+  scope: "all" | "qualified_review" = "all",
+): Promise<{ ok: boolean; queued: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+
+  let q = sb
+    .from("leads")
+    .select("id")
+    .not("bio", "is", null)
+    .neq("status", "pending");
+
+  if (scope === "qualified_review") {
+    q = q.in("status", ["qualified", "review"]);
+  }
+
+  const { data, error } = await q;
+  if (error) return { ok: false, queued: 0, error: error.message };
+  const rows = (data ?? []) as Array<{ id: string }>;
+  if (!rows.length) return { ok: true, queued: 0 };
+
+  const { inngest } = await import("@/inngest/client");
+
+  // Inngest accepts up to 512 events per send call.
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    await inngest.send(
+      chunk.map((r) => ({
+        name: "lead/score.requested" as const,
+        data: { lead_id: r.id, force: true },
+      })),
+    );
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, queued: rows.length };
+}
+
+// Null out sub-scores and overall_score for all rejected leads.
+// Used to backfill the "only good leads get a rating" behaviour after pipeline change.
+export async function clearRejectedScores(): Promise<{ ok: boolean; cleared: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+  const { data, error } = await sb
+    .from("leads")
+    .update({
+      overall_score: null,
+      icp_fit_score: null,
+      traction_score: null,
+      monetization_score: null,
+      activity_score: null,
+    })
+    .eq("status", "rejected")
+    .not("overall_score", "is", null)
+    .select("id");
+  if (error) return { ok: false, cleared: 0, error: error.message };
+  revalidatePath("/leads");
+  return { ok: true, cleared: (data ?? []).length };
+}
+
+export async function getPendingCount(): Promise<number> {
+  await requireUser();
+  const { count } = await createAdminClient()
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
+  return count ?? 0;
+}
+
+// Count how many leads were scored after `since` (ISO timestamp).
+// Used by the rescore progress panel to show live progress.
+export async function getRescoreProgress(since: string): Promise<{
+  processed: number;
+  qualified: number;
+  review: number;
+  rejected: number;
+}> {
+  await requireUser();
+  const sb = createAdminClient();
+  const { data } = await sb
+    .from("leads")
+    .select("status")
+    .not("bio", "is", null)
+    .in("status", ["qualified", "review", "rejected"])
+    .gte("updated_at", since);
+  const rows = (data ?? []) as Array<{ status: string }>;
+  return {
+    processed: rows.length,
+    qualified: rows.filter((r) => r.status === "qualified").length,
+    review:    rows.filter((r) => r.status === "review").length,
+    rejected:  rows.filter((r) => r.status === "rejected").length,
+  };
+}
+
 export async function recordManualOutreach(leadId: string): Promise<{ ok: boolean; error?: string }> {
   await requireUser();
   const sb = createAdminClient();

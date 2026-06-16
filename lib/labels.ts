@@ -14,6 +14,10 @@ const ACTION_LABELS: Record<string, string> = {
   recurse_queued: "Queued deeper search",
   recursed: "Searched their follows",
   persisted: "Saved",
+  email_found: "Email found",
+  email_not_found: "No email found",
+  funnel_found: "Offer found",
+  funnel_not_found: "No offer found",
   error: "Error",
 };
 
@@ -31,6 +35,8 @@ const POSITIVE_ACTIONS = new Set([
   "recurse_queued",
   "recursed",
   "persisted",
+  "email_found",
+  "funnel_found",
 ]);
 
 export function actionIsPositive(action: string): boolean {

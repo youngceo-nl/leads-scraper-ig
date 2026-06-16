@@ -58,6 +58,57 @@ export async function processLead(leadId: string): Promise<ProcessLeadResponse> 
   return { ok: true, job_id: job.id };
 }
 
+export type AnalyzeAllPendingResponse = { ok: boolean; queued: number; error?: string };
+
+// Queue the full scrape+score pipeline for every lead currently in "pending" status.
+// Used after a CSV import where leads have no seed and no score yet.
+export async function analyzeAllPending(): Promise<AnalyzeAllPendingResponse> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, queued: 0, error: "unauthorized" };
+
+  const admin = createAdminClient();
+  const { data: leads, error } = await admin
+    .from("leads")
+    .select("id, username, crawl_depth, source_seed_id, parent_username")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+  if (error || !leads?.length) return { ok: false, queued: 0, error: error?.message ?? "no pending leads" };
+
+  const { data: job, error: jobErr } = await admin
+    .from("crawl_jobs")
+    .insert({
+      seed_id: null,
+      status: "running",
+      max_depth: 0,
+      current_depth: 0,
+      expected_profiles: leads.length,
+      started_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (jobErr || !job) return { ok: false, queued: 0, error: jobErr?.message ?? "could not create crawl_job" };
+
+  const CHUNK = 500;
+  for (let i = 0; i < leads.length; i += CHUNK) {
+    await inngest.send(
+      leads.slice(i, i + CHUNK).map((lead) => ({
+        name: "crawl/profile.discovered" as const,
+        data: {
+          crawl_job_id: job.id,
+          seed_id: lead.source_seed_id ?? null,
+          username: lead.username,
+          depth: lead.crawl_depth ?? 0,
+          parent_username: lead.parent_username ?? null,
+        },
+      })),
+    );
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, queued: leads.length };
+}
+
 export type ProcessBatchResponse = { ok: boolean; queued: number; leadIds: string[]; error?: string };
 
 // Trigger the pipeline for multiple pending leads from the same seed source.

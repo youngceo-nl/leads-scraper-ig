@@ -4,8 +4,26 @@ import { createClaude } from "./client";
 import type { AiClassification } from "@/lib/scoring/types";
 import type { ScrapedProfile } from "@/lib/types";
 
-const SYSTEM = `You are classifying an Instagram creator/business account for a B2B outbound team.
-Output STRICT JSON only — no prose, no markdown, no code fences. Be decisive.`;
+const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS ONLY.
+
+An infopreneur sells KNOWLEDGE or EXPERTISE as a digital product (course, coaching program, mastermind, consulting) to a B2C audience. They close sales via DMs, calls, or webinars — not a checkout button.
+
+DEFAULT RULE: Assume "weak" unless there is explicit evidence of an info/knowledge business. High engagement, a big following, or a link in bio are NOT enough on their own.
+
+icp_signal:
+- "strong": account clearly sells a digital knowledge product — bio/captions mention coaching program, course, mastermind, DM to apply, book a call, webinar, or show client results/revenue proof
+- "moderate": account is in the right INDUSTRY (education, coaching, consulting) but the offer or price point is unclear — e.g., educates in their niche but no paid product is obvious
+- "weak": EVERYTHING ELSE — this includes:
+  • Any physical product brand (food, candy, clothing, beauty, supplements, DTC, merch) — even if the founder is an "influencer"
+  • Service businesses (restaurant, salon, agency, contractor, transport)
+  • B2B SaaS or software
+  • Pure content creators, entertainers, meme pages, news accounts
+  • Influencers whose only monetisation is affiliate links or brand deals
+  • Brands that sell via an online store / checkout button
+
+When in doubt, use "weak". Engagement and follower count do not affect icp_signal.
+
+Output STRICT JSON only — no prose, no markdown, no code fences.`;
 
 const SCHEMA_HINT = `{
   "niche": string,
@@ -13,7 +31,8 @@ const SCHEMA_HINT = `{
   "offer_type": string,
   "audience_type": string,
   "has_visible_offer": boolean,
-  "offer_confidence": "high"|"medium"|"low"|"none"
+  "offer_confidence": "high"|"medium"|"low"|"none",
+  "icp_signal": "strong"|"moderate"|"weak"
 }`;
 
 const Parsed = z.object({
@@ -23,6 +42,7 @@ const Parsed = z.object({
   audience_type: z.string(),
   has_visible_offer: z.boolean(),
   offer_confidence: z.enum(["high", "medium", "low", "none"]),
+  icp_signal: z.enum(["strong", "moderate", "weak"]),
 });
 
 export async function classifyWithClaude(opts: {

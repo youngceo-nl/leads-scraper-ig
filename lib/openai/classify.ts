@@ -4,13 +4,31 @@ import { z } from "zod";
 import type { AiClassification } from "@/lib/scoring/types";
 import type { ScrapedProfile } from "@/lib/types";
 
-const SYSTEM = `You are classifying an Instagram creator/business account for a B2B outbound team.
-Output STRICT JSON. Be decisive — pick the best bucket even when info is partial.`;
+const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS ONLY.
+
+An infopreneur sells KNOWLEDGE or EXPERTISE as a digital product (course, coaching program, mastermind, consulting) to a B2C audience. They close sales via DMs, calls, or webinars — not a checkout button.
+
+DEFAULT RULE: Assume "weak" unless there is explicit evidence of an info/knowledge business. High engagement, a big following, or a link in bio are NOT enough on their own.
+
+icp_signal:
+- "strong": account clearly sells a digital knowledge product — bio/captions mention coaching program, course, mastermind, DM to apply, book a call, webinar, or show client results/revenue proof
+- "moderate": account is in the right INDUSTRY (education, coaching, consulting) but the offer or price point is unclear — e.g., educates in their niche but no paid product is obvious
+- "weak": EVERYTHING ELSE — this includes:
+  • Any physical product brand (food, candy, clothing, beauty, supplements, DTC, merch) — even if the founder is an "influencer"
+  • Service businesses (restaurant, salon, agency, contractor, transport)
+  • B2B SaaS or software
+  • Pure content creators, entertainers, meme pages, news accounts
+  • Influencers whose only monetisation is affiliate links or brand deals
+  • Brands that sell via an online store / checkout button
+
+When in doubt, use "weak". Engagement and follower count do not affect icp_signal.
+
+Output STRICT JSON only — no prose, no markdown.`;
 
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["niche", "business_model", "offer_type", "audience_type", "has_visible_offer", "offer_confidence"],
+  required: ["niche", "business_model", "offer_type", "audience_type", "has_visible_offer", "offer_confidence", "icp_signal"],
   properties: {
     niche:              { type: "string" },
     business_model:     { type: "string", enum: ["course", "coaching", "agency", "ecom", "saas", "creator", "unknown"] },
@@ -18,6 +36,7 @@ const SCHEMA = {
     audience_type:      { type: "string" },
     has_visible_offer:  { type: "boolean" },
     offer_confidence:   { type: "string", enum: ["high", "medium", "low", "none"] },
+    icp_signal:         { type: "string", enum: ["strong", "moderate", "weak"] },
   },
 } as const;
 
@@ -28,6 +47,7 @@ const Parsed = z.object({
   audience_type: z.string(),
   has_visible_offer: z.boolean(),
   offer_confidence: z.enum(["high", "medium", "low", "none"]),
+  icp_signal: z.enum(["strong", "moderate", "weak"]),
 });
 
 export async function classifyWithOpenAi(opts: {
@@ -54,11 +74,12 @@ ${captions || "(none)"}
 
 Fields to return:
 - niche: short phrase like "fitness coaching", "b2b saas", "beauty ecom"
-- business_model: one of course/coaching/agency/ecom/saas/creator/unknown
-- offer_type: brief, e.g. "$497 course", "free lead magnet", "DTC skincare", "1:1 coaching", "unknown"
+- business_model: course / coaching / agency / ecom / saas / creator / unknown
+- offer_type: brief e.g. "$497 course", "free lead magnet", "DTC skincare", "1:1 coaching", "unknown"
 - audience_type: who they serve, 1 line
 - has_visible_offer: true ONLY if bio or captions clearly advertise a paid offer / product / service
-- offer_confidence: high | medium | low | none`;
+- offer_confidence: high | medium | low | none
+- icp_signal: strong | moderate | weak  (see system prompt for definitions)`;
 
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 3; attempt++) {

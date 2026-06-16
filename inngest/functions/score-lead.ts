@@ -31,9 +31,8 @@ export const scoreLead = inngest.createFunction(
       return data;
     });
 
-    // Skip if already scored — re-scoring would mostly be a re-classification
-    // and we shouldn't burn OpenAI tokens on already-graded leads.
-    if (lead.overall_score != null && lead.status !== "pending") {
+    // Skip if already scored — unless the caller explicitly forces a rescore.
+    if (lead.overall_score != null && lead.status !== "pending" && !event.data.force) {
       return { skipped: "already_scored", status: lead.status };
     }
 
@@ -60,7 +59,7 @@ export const scoreLead = inngest.createFunction(
         const sb = createAdminClient();
         await sb
           .from("leads")
-          .update({ status: "rejected", rejection_reason: hard.reason })
+          .update({ status: "rejected", rejection_reason: hard.reason, overall_score: null })
           .eq("id", lead_id);
       });
       await logCrawl({
@@ -88,6 +87,7 @@ export const scoreLead = inngest.createFunction(
           .update({
             status: "rejected",
             rejection_reason: mg.reason,
+            overall_score: null,
             avg_likes: metrics.avg_likes,
             avg_comments: metrics.avg_comments,
             avg_views: metrics.avg_views,
@@ -150,11 +150,11 @@ export const scoreLead = inngest.createFunction(
           business_model: score.business_model,
           offer_type: score.offer_type,
           audience_type: score.audience_type,
-          icp_fit_score: score.icp_fit_score,
-          traction_score: score.traction_score,
-          monetization_score: score.monetization_score,
-          activity_score: score.activity_score,
-          overall_score: score.overall_score,
+          icp_fit_score: status === "rejected" ? null : score.icp_fit_score,
+          traction_score: status === "rejected" ? null : score.traction_score,
+          monetization_score: status === "rejected" ? null : score.monetization_score,
+          activity_score: status === "rejected" ? null : score.activity_score,
+          overall_score: status === "rejected" ? null : score.overall_score,
           reason_for_score: score.reason_for_score,
           recommended_action: score.recommended_action,
           status,

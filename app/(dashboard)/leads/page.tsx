@@ -7,7 +7,6 @@ import { LeadsFilterBar } from "@/components/leads/filter-bar";
 import { Button } from "@/components/ui/button";
 import { EnrichButton } from "@/components/leads/enrich-button";
 import { AddLeadButton } from "@/components/leads/add-lead-button";
-import { CsvImportButton } from "@/components/leads/csv-import-button";
 import { ColumnVisibility } from "@/components/leads/column-visibility";
 import { SendEmailButton } from "@/components/leads/send-email-button";
 import { ProcessButton } from "@/components/leads/process-button";
@@ -18,8 +17,8 @@ import { SelectionProvider, SelectAllCheckbox, LeadCheckbox, BulkDeleteBar } fro
 import { formatNumber, formatPct, scoreColor } from "@/lib/utils";
 import { buildKeywordOr } from "@/lib/leads/keyword-filter";
 import { statusLabel } from "@/lib/labels";
-import { Download, Upload, ChevronLeft, ChevronRight, ExternalLink, Youtube, Linkedin } from "lucide-react";
-import { RetryFunnelButton } from "@/components/leads/retry-funnel-button";
+import { ChevronLeft, ChevronRight, ExternalLink, Youtube, Linkedin } from "lucide-react";
+import { LeadsActionsMenu } from "@/components/leads/actions-menu";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 50;
@@ -121,6 +120,26 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     .is("funnel_program_name", null)
     .not("external_link", "is", null);
 
+  // Count qualified + review leads for the rescore button
+  const { count: scoreableCount } = await sb
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .not("bio", "is", null)
+    .in("status", ["qualified", "review"]);
+
+  // Count unanalyzed (pending) leads
+  const { count: pendingCount } = await sb
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
+
+  // Count rejected leads that still have a score (leftover from before the pipeline fix)
+  const { count: rejectedWithScore } = await sb
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "rejected")
+    .not("overall_score", "is", null);
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-end justify-between gap-4">
@@ -129,15 +148,15 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           <p className="text-sm text-muted-foreground">{formatNumber(total)} total · page {page} of {totalPages}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {(missingProgramNames ?? 0) > 0 && (
-            <RetryFunnelButton missingCount={missingProgramNames ?? 0} />
-          )}
           <AddLeadButton />
-          <CsvImportButton />
           <ColumnVisibility />
-          <Button asChild variant="secondary">
-            <a href={exportHref}><Upload className="h-4 w-4 mr-2" /> Export CSV</a>
-          </Button>
+          <LeadsActionsMenu
+            pendingCount={pendingCount ?? 0}
+            scoreableCount={scoreableCount ?? 0}
+            rejectedWithScore={rejectedWithScore ?? 0}
+            missingProgramNames={missingProgramNames ?? 0}
+            exportHref={exportHref}
+          />
         </div>
       </div>
 

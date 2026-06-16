@@ -9,6 +9,8 @@ import { attemptYoutubeEmail } from "@/lib/youtube/email-from-channel";
 import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured, checkYoutubeCookieLive } from "@/lib/youtube/refresh-cookie";
 import { scrapeWebsiteForEmail } from "@/lib/website/scrape-email";
 import { extractEmailFromText } from "@/lib/leads/email-extract";
+import { inferEmailFromDomain, extractDomain } from "@/lib/email/domain-inference";
+import { findEmailWithHunter } from "@/lib/email/hunter";
 import type { EnrichProgress } from "@/lib/pipeline/enrich-progress";
 
 export type EnrichPipelineResult = {
@@ -17,7 +19,7 @@ export type EnrichPipelineResult = {
   youtube_url: string | null;
   email: string | null;
   email_status: string;
-  source: "cached" | "ig_bio" | "website" | "youtube" | "skipped";
+  source: "cached" | "ig_bio" | "website" | "youtube" | "domain_inference" | "hunter" | "skipped";
   // User-facing summary of what happened when no email was found.
   error: string | null;
   // Full step-by-step trace, surfaced behind a "details" affordance in the UI.
@@ -132,40 +134,9 @@ export async function enrichLeadPipeline(opts: {
     }
   }
 
-  // ── Step 2: scrape the website linked in their bio / funnel URL (free). ───
-  const hasSite = [externalLink, funnelUrl].some(
-    (u) => u && !extractYouTubeChannelUrl(u) && !u.includes("linkedin.com"),
-  );
-  if (hasSite) emit({ stage: "website", state: "start", label: "Their website…" });
-  let websiteScraped = false;
-  for (const url of [externalLink, funnelUrl]) {
-    if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
-    websiteScraped = true;
-    const { email: siteEmail, error: siteErr } = await scrapeWebsiteForEmail(url);
-    if (siteEmail) {
-      emit({ stage: "website", state: "hit", label: "Found on website" });
-      return persistAndReturn({
-        leadId: opts.leadId,
-        patch: {
-          email: siteEmail,
-          email_status: "found",
-          email_provider: "website_scrape",
-          email_verifier: null,
-          enriched_at: new Date().toISOString(),
-          enrichment_error: null,
-        },
-        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: existingYoutube, email: siteEmail, email_status: "found", source: "website", error: null },
-      });
-    }
-    steps.push(`website(${url.slice(0, 40)}): ${siteErr ?? "none"}`);
-  }
-  if (!websiteScraped) steps.push("website: skipped (no link or is YT/LI)");
-
-  // ── Steps 3 & 4: resolve the YouTube channel, then scrape its About page. ──
+  // ── Step 2: resolve the YouTube channel, then scrape its About page. ──────
   let youtubeUrl: string | null = existingYoutube;
   let youtubeError: string | null = null;
-  // Signals from the YouTube attempt that feed a more telling failure message:
-  // whether the session cookie was rejected, and the gated "View email" error.
   let ytAuthFailed = false;
   let ytGatedError: string | null = null;
 
@@ -174,9 +145,6 @@ export async function enrichLeadPipeline(opts: {
     youtubeUrl = extractYouTubeChannelUrl(externalLink);
     if (youtubeUrl) steps.push("yt_url: from bio link");
   }
-  // Follow the link-in-bio (Linktree/Beacons/Stan/personal site) and grab the
-  // YouTube button from it. Higher precision than name-search, so try it first —
-  // it nails creators whose channel handle doesn't match their display name.
   if (!youtubeUrl) {
     for (const link of [externalLink, funnelUrl]) {
       if (!link || extractYouTubeChannelUrl(link) || link.includes("linkedin.com")) continue;
@@ -186,10 +154,6 @@ export async function enrichLeadPipeline(opts: {
     }
   }
   if (!youtubeUrl && serperKey && (tokens.length >= 2 || username)) {
-    // When the stored display name is too weak (single token like "Julian" from
-    // "Julian | 1% Better Everyday"), ask GPT-4o-mini to infer the real full
-    // name from the bio + username before running the Serper search. This prevents
-    // wrong search terms like "Julian site:youtube.com" that return nothing useful.
     let searchName = fullName;
     if (tokens.length < 2 && openAiKey) {
       const inferred = await inferRealName({
@@ -205,7 +169,6 @@ export async function enrichLeadPipeline(opts: {
         steps.push("yt_infer_name: unknown");
       }
     }
-
     const hint = buildHint(lead.niche as string | null, lead.bio as string | null);
     const lookup = await findYouTubeChannel({ apiKey: serperKey, fullName: searchName, username, hints: hint });
     youtubeUrl = lookup.url;
@@ -218,13 +181,6 @@ export async function enrichLeadPipeline(opts: {
   if (youtubeUrl) {
     emit({ stage: "youtube", state: "start", label: "YouTube About…" });
     const ytProxy = process.env.YT_REVEAL_PROXY || null;
-
-    // Guarantee we enter the reveal with a LIVE cookie. Probe the stored cookie
-    // up front; if it's missing or logged-out AND a Google login is configured,
-    // sign in and mint a fresh one before spending a captcha solve. "unknown"
-    // (probe couldn't tell — network blip / consent wall) is left alone so a
-    // transient hiccup doesn't trigger a needless re-login; the reactive refresh
-    // below still covers a cookie that dies mid-run.
     let mintedThisRun = false;
     if (youtubeLoginConfigured(settings)) {
       const liveness = ytGoogleCookie ? await checkYoutubeCookieLive(ytGoogleCookie) : "dead";
@@ -242,10 +198,6 @@ export async function enrichLeadPipeline(opts: {
     }
 
     let attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie, capsolverKey, proxy: ytProxy });
-
-    // Cookie rejected as logged-out mid-run? Re-mint and retry once — but skip if
-    // we already minted a fresh cookie this run (the cooldown would just hand back
-    // the same one, so a repeat failure is the reveal's problem, not the cookie's).
     if (attempt.authFailed && youtubeLoginConfigured(settings) && !mintedThisRun) {
       const refreshed = await refreshAndSaveYoutubeCookie();
       if (refreshed.cookie) {
@@ -277,9 +229,6 @@ export async function enrichLeadPipeline(opts: {
     }
     youtubeError = youtubeError ?? attempt.youtubeError;
     ytAuthFailed = attempt.authFailed;
-    // The gated "View email" reveal logs its own outcome as `yt_capsolver: …`;
-    // pull it out so a cookie/captcha failure isn't masked by the free-scrape
-    // "no email on About" result.
     const capLine = attempt.trace.find((t) => t.startsWith("yt_capsolver: "));
     if (capLine) {
       const v = capLine.slice("yt_capsolver: ".length);
@@ -287,6 +236,95 @@ export async function enrichLeadPipeline(opts: {
     }
   } else {
     steps.push("yt_cookie_scrape: skipped (no channel found)");
+  }
+
+  // ── Step 3: scrape the website linked in their bio / funnel URL (free). ───
+  const hasSite = [externalLink, funnelUrl].some(
+    (u) => u && !extractYouTubeChannelUrl(u) && !u.includes("linkedin.com"),
+  );
+  if (hasSite) emit({ stage: "website", state: "start", label: "Their website…" });
+  let websiteScraped = false;
+  for (const url of [externalLink, funnelUrl]) {
+    if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
+    websiteScraped = true;
+    const { email: siteEmail, error: siteErr } = await scrapeWebsiteForEmail(url);
+    if (siteEmail) {
+      emit({ stage: "website", state: "hit", label: "Found on website" });
+      return persistAndReturn({
+        leadId: opts.leadId,
+        patch: {
+          email: siteEmail,
+          email_status: "found",
+          email_provider: "website_scrape",
+          email_verifier: null,
+          enriched_at: new Date().toISOString(),
+          enrichment_error: null,
+        },
+        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: siteEmail, email_status: "found", source: "website", error: null },
+      });
+    }
+    steps.push(`website(${url.slice(0, 40)}): ${siteErr ?? "none"}`);
+  }
+  if (!websiteScraped) steps.push("website: skipped (no link or is YT/LI)");
+
+  // ── Step 4: domain + name inference — last resort (Hunter.io if key set, else free DNS guess). ──
+  {
+    const hunterKey = settings.hunter_api_key || process.env.HUNTER_API_KEY || "";
+    const domain = extractDomain(externalLink ?? funnelUrl);
+
+    if (domain) {
+      emit({ stage: "domain_inference", state: "start", label: hunterKey ? "Hunter.io…" : "Domain lookup…" });
+
+      let inferredEmail: string | null = null;
+      let inferSource: "hunter" | "domain_inference" = "domain_inference";
+
+      if (hunterKey) {
+        const r = await findEmailWithHunter({ apiKey: hunterKey, domain, fullName });
+        if (r.email) {
+          inferredEmail = r.email;
+          inferSource = "hunter";
+          steps.push(`hunter: ${r.email} (score=${"score" in r ? r.score : "?"})`);
+        } else {
+          steps.push(`hunter: ${"reason" in r ? r.reason : "no_email"}`);
+        }
+      }
+
+      if (!inferredEmail) {
+        const r = await inferEmailFromDomain({ externalLink: externalLink ?? funnelUrl, fullName });
+        if (r.email) {
+          inferredEmail = r.email;
+          steps.push(`domain_inference: ${r.email} (${"pattern" in r ? r.pattern : ""})`);
+        } else {
+          steps.push(`domain_inference: ${"reason" in r ? r.reason : "no_email"}`);
+        }
+      }
+
+      if (inferredEmail) {
+        emit({ stage: "domain_inference", state: "hit", label: hunterKey ? "Found via Hunter" : "Inferred from domain" });
+        return persistAndReturn({
+          leadId: opts.leadId,
+          patch: {
+            email: inferredEmail,
+            email_status: "inferred",
+            email_provider: inferSource,
+            email_verifier: null,
+            enriched_at: new Date().toISOString(),
+            enrichment_error: null,
+          },
+          result: {
+            ok: true,
+            linkedin_url: existingLinkedin,
+            youtube_url: youtubeUrl,
+            email: inferredEmail,
+            email_status: "inferred",
+            source: inferSource,
+            error: null,
+          },
+        });
+      }
+    } else {
+      steps.push("domain_inference: skipped (no personal domain)");
+    }
   }
 
   // ── Nothing turned up through any of the available (free) public sources. ──

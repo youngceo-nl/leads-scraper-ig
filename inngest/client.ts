@@ -53,6 +53,8 @@ type Events = {
     data: {
       lead_id: string;
       crawl_job_id?: string | null;
+      /** Set to true to bypass the "already scored" skip guard and force a re-classification */
+      force?: boolean;
     };
   };
 };

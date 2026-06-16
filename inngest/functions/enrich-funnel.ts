@@ -1,6 +1,7 @@
 import { inngest } from "@/inngest/client";
 import { enrichFunnelForLead } from "@/lib/funnel/enrich";
-import { getJobStatus, logError } from "@/lib/pipeline/persist";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getJobStatus, logCrawl, logError } from "@/lib/pipeline/persist";
 
 export const enrichFunnel = inngest.createFunction(
   {
@@ -23,10 +24,25 @@ export const enrichFunnel = inngest.createFunction(
       }
     }
 
+    const lead = await step.run("load-lead", async () => {
+      const { data } = await createAdminClient().from("leads").select("username, crawl_depth, parent_username").eq("id", lead_id).single();
+      return data;
+    });
+
     try {
       const result = await step.run("enrich-funnel", () =>
         enrichFunnelForLead({ leadId: lead_id, externalLink: external_link }),
       );
+      await logCrawl({
+        crawl_job_id: crawl_job_id ?? null,
+        profile_username: lead?.username ?? lead_id,
+        parent_username: lead?.parent_username ?? null,
+        action: result.funnel_program_name ? "funnel_found" : "funnel_not_found",
+        depth: lead?.crawl_depth ?? 0,
+        detail: result.funnel_program_name
+          ? `${result.funnel_program_name}${result.funnel_platform ? ` (${result.funnel_platform})` : ""}`
+          : (result.error ?? "no offer found"),
+      });
       return { ok: result.ok, platform: result.funnel_platform, program: result.funnel_program_name };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

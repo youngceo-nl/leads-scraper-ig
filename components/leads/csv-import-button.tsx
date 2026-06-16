@@ -79,8 +79,16 @@ const SKIP = "— skip —";
 
 type Step = "upload" | "map" | "done";
 
-export function CsvImportButton() {
-  const [open, setOpen] = useState(false);
+export function CsvImportButton({
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (v: boolean) => { setInternalOpen(v); onOpenChange?.(v); };
   const [step, setStep] = useState<Step>("upload");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<string[][]>([]);
@@ -146,10 +154,12 @@ export function CsvImportButton() {
 
   return (
     <>
-      <Button variant="secondary" onClick={() => setOpen(true)}>
-        <Download className="h-4 w-4 mr-2" />
-        Import CSV
-      </Button>
+      {controlledOpen === undefined && (
+        <Button variant="secondary" onClick={() => setOpen(true)}>
+          <Download className="h-4 w-4 mr-2" />
+          Import CSV
+        </Button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

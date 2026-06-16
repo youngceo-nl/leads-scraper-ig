@@ -43,13 +43,36 @@ export function buildLeadContext(opts: {
   };
 }
 
+// Converts template body (supports lightweight markdown) to HTML for sending.
+// Supported: **bold**, *italic*, - bullet lists, plain line/paragraph breaks.
 export function textToHtml(text: string): string {
-  const esc = text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return esc
-    .split(/\n{2,}/)
-    .map((p) => `<p>${p.replace(/\n/g, "<br />")}</p>`)
-    .join("\n");
+  // Split into blocks on blank lines
+  const blocks = text.split(/\n{2,}/);
+  const rendered = blocks.map((block) => {
+    const lines = block.split("\n");
+    // Bullet list block: all lines start with "- " or "* "
+    if (lines.every((l) => /^[-*]\s/.test(l.trimStart()))) {
+      const items = lines.map((l) => {
+        const content = l.replace(/^[-*]\s/, "").trim();
+        return `<li>${inlineMarkdown(htmlEsc(content))}</li>`;
+      });
+      return `<ul style="margin:0 0 0 1.2em;padding:0">${items.join("")}</ul>`;
+    }
+    // Normal paragraph
+    const inner = lines
+      .map((l) => inlineMarkdown(htmlEsc(l)))
+      .join("<br />");
+    return `<p style="margin:0 0 1em 0">${inner}</p>`;
+  });
+  return rendered.join("\n");
+}
+
+function htmlEsc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function inlineMarkdown(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
 }

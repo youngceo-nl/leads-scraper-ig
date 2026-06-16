@@ -67,12 +67,14 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
           </div>
         </div>
 
-        <div className="text-right">
-          <div className={`inline-block px-4 py-2 rounded-md text-3xl font-semibold ${scoreColor(l.overall_score)}`}>
-            {l.overall_score != null ? Number(l.overall_score).toFixed(1) : "—"}
+        {l.status !== "rejected" && (
+          <div className="text-right">
+            <div className={`inline-block px-4 py-2 rounded-md text-3xl font-semibold ${scoreColor(l.overall_score)}`}>
+              {l.overall_score != null ? Number(l.overall_score).toFixed(1) : "—"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">overall score</p>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">overall score</p>
-        </div>
+        )}
       </header>
 
       <Card>
@@ -172,33 +174,42 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
         <Stat label="Engagement" value={formatPct(l.engagement_rate)} />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
+      {l.status !== "rejected" ? (
+        <div className="grid md:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader><CardTitle>Score breakdown</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <ScoreRow label="Ideal-customer fit" value={l.icp_fit_score} />
+              <ScoreRow label="Traction"     value={l.traction_score} />
+              <ScoreRow label="Monetization" value={l.monetization_score} />
+              <ScoreRow label="Activity"     value={l.activity_score} />
+              <Separator />
+              <ScoreRow label="Overall"      value={l.overall_score} bold />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Classification</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <KV k="Niche" v={l.niche} />
+              <KV k="Business model" v={l.business_model} />
+              <KV k="Offer" v={l.offer_type} />
+              <KV k="Audience" v={l.audience_type} />
+              <KV k="Recommended" v={l.recommended_action} />
+              <KV k="Activity" v={l.activity_status?.replace("_", " ")} />
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
         <Card>
-          <CardHeader><CardTitle>Score breakdown</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            <ScoreRow label="Ideal-customer fit" value={l.icp_fit_score} />
-            <ScoreRow label="Traction"     value={l.traction_score} />
-            <ScoreRow label="Monetization" value={l.monetization_score} />
-            <ScoreRow label="Activity"     value={l.activity_score} />
-            <Separator />
-            <ScoreRow label="Overall"      value={l.overall_score} bold />
+          <CardHeader><CardTitle>Rejection reason</CardTitle></CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            {l.rejection_reason?.replace(/_/g, " ") ?? "—"}
           </CardContent>
         </Card>
+      )}
 
-        <Card>
-          <CardHeader><CardTitle>Classification</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <KV k="Niche" v={l.niche} />
-            <KV k="Business model" v={l.business_model} />
-            <KV k="Offer" v={l.offer_type} />
-            <KV k="Audience" v={l.audience_type} />
-            <KV k="Recommended" v={l.recommended_action} />
-            <KV k="Activity" v={l.activity_status?.replace("_", " ")} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {l.reason_for_score && (
+      {l.status !== "rejected" && l.reason_for_score && (
         <Card>
           <CardHeader><CardTitle>Why it scored this way</CardTitle></CardHeader>
           <CardContent><p className="text-sm whitespace-pre-wrap">{l.reason_for_score}</p></CardContent>
