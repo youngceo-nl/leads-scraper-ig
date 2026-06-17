@@ -94,6 +94,7 @@ export function SettingsForm({
             <Separator />
             <Field label="CapSolver API key" name="capsolver_api_key" defaultValue={initial.capsolver_api_key ?? ""} type="password" hint="Solves reCAPTCHA when revealing gated business emails on YouTube. Falls back to CAPSOLVER_API_KEY env var." />
             <Field label="Hunter.io API key (optional)" name="hunter_api_key" defaultValue={initial.hunter_api_key ?? ""} type="password" hint="Domain + name email lookup. Free tier: 25 searches/month. Falls back to HUNTER_API_KEY env var. Leave blank to use our free DNS-based inference instead." />
+            <Field label="Instagram proxy URL (optional)" name="instagram_proxy_url" defaultValue={initial.instagram_proxy_url ?? ""} hint="Rotating proxy for Instagram scraping. Format: http://user:pass@host:port — only used as fallback when a 429 rate-limit is hit. Falls back to INSTAGRAM_PROXY_URL env var." />
           </CardContent>
         </Card>
 

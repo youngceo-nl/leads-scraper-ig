@@ -14,8 +14,8 @@ export const processProfile = inngest.createFunction(
     name: "Process discovered profile",
     retries: 3,
     concurrency: [
-      { limit: 5, key: "event.data.crawl_job_id" }, // 5 profiles per crawl
-      { limit: 20 },                                  // 20 globally (rate-limit guard)
+      { limit: 10, key: "event.data.crawl_job_id" }, // 10 profiles per crawl
+      { limit: 30 },                                  // 30 globally
     ],
   },
   { event: "crawl/profile.discovered" },

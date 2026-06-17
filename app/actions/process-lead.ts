@@ -58,7 +58,7 @@ export async function processLead(leadId: string): Promise<ProcessLeadResponse> 
   return { ok: true, job_id: job.id };
 }
 
-export type AnalyzeAllPendingResponse = { ok: boolean; queued: number; error?: string };
+export type AnalyzeAllPendingResponse = { ok: boolean; queued: number; crawl_job_id?: string; error?: string };
 
 // Queue the full scrape+score pipeline for every lead currently in "pending" status.
 // Used after a CSV import where leads have no seed and no score yet.
@@ -70,10 +70,15 @@ export async function analyzeAllPending(): Promise<AnalyzeAllPendingResponse> {
   const admin = createAdminClient();
   const { data: leads, error } = await admin
     .from("leads")
-    .select("id, username, crawl_depth, source_seed_id, parent_username")
+    .select("id, username, crawl_depth, source_seed_id, parent_username, bio")
     .eq("status", "pending")
     .order("created_at", { ascending: true });
   if (error || !leads?.length) return { ok: false, queued: 0, error: error?.message ?? "no pending leads" };
+
+  // Leads that already have a bio (e.g. from CSV import) skip the expensive
+  // Apify scrape and go straight to AI scoring — seconds instead of minutes.
+  const withBio    = leads.filter((l) => l.bio);
+  const withoutBio = leads.filter((l) => !l.bio);
 
   const { data: job, error: jobErr } = await admin
     .from("crawl_jobs")
@@ -90,9 +95,21 @@ export async function analyzeAllPending(): Promise<AnalyzeAllPendingResponse> {
   if (jobErr || !job) return { ok: false, queued: 0, error: jobErr?.message ?? "could not create crawl_job" };
 
   const CHUNK = 500;
-  for (let i = 0; i < leads.length; i += CHUNK) {
+
+  // Fast path: already have bio → just score
+  for (let i = 0; i < withBio.length; i += CHUNK) {
     await inngest.send(
-      leads.slice(i, i + CHUNK).map((lead) => ({
+      withBio.slice(i, i + CHUNK).map((lead) => ({
+        name: "lead/score.requested" as const,
+        data: { lead_id: lead.id, crawl_job_id: job.id, force: false },
+      })),
+    );
+  }
+
+  // Slow path: no bio → full scrape pipeline
+  for (let i = 0; i < withoutBio.length; i += CHUNK) {
+    await inngest.send(
+      withoutBio.slice(i, i + CHUNK).map((lead) => ({
         name: "crawl/profile.discovered" as const,
         data: {
           crawl_job_id: job.id,
@@ -106,7 +123,7 @@ export async function analyzeAllPending(): Promise<AnalyzeAllPendingResponse> {
   }
 
   revalidatePath("/leads");
-  return { ok: true, queued: leads.length };
+  return { ok: true, queued: leads.length, crawl_job_id: job.id };
 }
 
 export type ProcessBatchResponse = { ok: boolean; queued: number; leadIds: string[]; error?: string };

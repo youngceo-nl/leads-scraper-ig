@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { actionLabel, actionIsPositive } from "@/lib/labels";
 import { getPendingCount, getRescoreProgress } from "@/app/actions/leads";
+import { cancelCrawl } from "@/app/actions/crawl-jobs";
 
 type CrawlLog = {
   id: string;
@@ -28,6 +29,7 @@ type BulkJob = {
   type: "analyze" | "rescore" | string;
   startedAt: number;
   done: number;
+  crawl_job_id?: string;
 };
 
 export function ActivityDrawerButton() {
@@ -69,7 +71,7 @@ export function ActivityDrawerButton() {
       setOpen(true);
       setTab("activity");
       if (detail?.total && detail?.label && detail?.startedAt) {
-        setBulkJob({ label: detail.label, total: detail.total, type: detail.type ?? "", startedAt: detail.startedAt, done: 0 });
+        setBulkJob({ label: detail.label, total: detail.total, type: detail.type ?? "", startedAt: detail.startedAt, done: 0, crawl_job_id: detail.crawl_job_id as string | undefined });
       }
     };
     window.addEventListener("open-activity-drawer", handler);
@@ -189,7 +191,7 @@ export function ActivityDrawerButton() {
 
         {/* Bulk job progress */}
         {tab === "activity" && bulkJob && bulkJob.done < bulkJob.total && (
-          <BulkProgress job={bulkJob} />
+          <BulkProgress job={bulkJob} onCancel={() => setBulkJob(null)} />
         )}
 
         {/* Log list */}
@@ -254,7 +256,7 @@ export function ActivityDrawerButton() {
   );
 }
 
-function BulkProgress({ job }: { job: BulkJob }) {
+function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void }) {
   const pct = job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
   const elapsedMin = (Date.now() - job.startedAt) / 60_000;
   const perMin = elapsedMin > 0.1 ? job.done / elapsedMin : null;
@@ -267,11 +269,29 @@ function BulkProgress({ job }: { job: BulkJob }) {
     : etaMin < 60 ? `~${Math.round(etaMin)} min`
     : `~${Math.round(etaMin / 60)}h`;
 
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    if (job.crawl_job_id) await cancelCrawl(job.crawl_job_id);
+    onCancel();
+  };
+
   return (
     <div className="px-4 py-3 border-b bg-muted/30 shrink-0 space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium">{job.label}</span>
-        <span className="text-muted-foreground tabular-nums">{job.done} / {job.total}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground tabular-nums">{job.done} / {job.total}</span>
+          <button
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+            title="Cancel"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
         <div

@@ -58,13 +58,38 @@ type IgUser = {
   };
 };
 
+async function igFetch(url: string, init: {
+  headers: Record<string, string>;
+  method?: string;
+  body?: string;
+  timeoutMs: number;
+  proxyUrl?: string | null;
+}): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), init.timeoutMs);
+  try {
+    if (init.proxyUrl) {
+      const { ProxyAgent } = await import("undici");
+      const dispatcher = new ProxyAgent(init.proxyUrl);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await (fetch as any)(url, { method: init.method ?? "GET", headers: init.headers, body: init.body, signal: ctrl.signal, dispatcher });
+    }
+    return await fetch(url, { method: init.method ?? "GET", headers: init.headers, body: init.body, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function fetchProfileMetadataDirect(opts: {
   username: string;
   sessionCookie?: string | null;
   timeoutMs?: number;
-  skipReels?: boolean; // skip the extra reels fetch when only profile fields are needed
+  skipReels?: boolean;
+  delayMs?: number;
+  proxyUrl?: string | null; // rotating proxy — only used reactively on 429
 }): Promise<ProfileMetadata | null> {
   const { username, sessionCookie, timeoutMs = 15_000 } = opts;
+  if (opts.delayMs) await sleep(opts.delayMs);
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
   const headers: Record<string, string> = {
     "User-Agent": randomUA(),
@@ -75,18 +100,24 @@ export async function fetchProfileMetadataDirect(opts: {
   };
   if (sessionCookie) headers["Cookie"] = sessionCookie;
 
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-
   let res: Response;
   try {
-    res = await fetch(url, { headers, signal: ctrl.signal });
+    res = await igFetch(url, { headers, timeoutMs });
   } catch (err) {
-    clearTimeout(t);
     const msg = err instanceof Error ? err.message : String(err);
     throw new InstagramDirectError(`network error: ${msg}`, undefined, true);
   }
-  clearTimeout(t);
+
+  // Hit a 429 — retry once through the rotating proxy if one is configured
+  if (res.status === 429 && opts.proxyUrl) {
+    try {
+      headers["User-Agent"] = randomUA();
+      res = await igFetch(url, { headers, timeoutMs, proxyUrl: opts.proxyUrl });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new InstagramDirectError(`proxy retry network error: ${msg}`, undefined, true);
+    }
+  }
 
   if (res.status === 404) return null;
 

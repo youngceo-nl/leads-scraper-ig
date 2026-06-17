@@ -42,11 +42,12 @@ export function LeadsActionsMenu({
   const [, start] = useTransition();
   const [csvOpen, setCsvOpen] = useState(false);
 
-  const run = (action: () => Promise<unknown>, detail: Record<string, unknown> = {}, refresh = false) => {
+  const run = (action: () => Promise<Record<string, unknown> | unknown>, detail: Record<string, unknown> = {}, refresh = false) => {
     const startedAt = Date.now();
     start(async () => {
-      await action();
-      openActivity({ ...detail, startedAt });
+      const result = await action();
+      const extra = result && typeof result === "object" ? result as Record<string, unknown> : {};
+      openActivity({ ...detail, startedAt, ...extra });
       if (refresh) router.refresh();
     });
   };
