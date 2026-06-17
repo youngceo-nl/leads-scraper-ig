@@ -197,27 +197,29 @@ function accountsKey(platform: Platform): "instagram_accounts" | "yt_accounts" {
   return platform === "instagram" ? "instagram_accounts" : "yt_accounts";
 }
 
-async function loginManaged(platform: Platform, account: ManagedAccount): Promise<string> {
+async function loginManaged(platform: Platform, account: ManagedAccount): Promise<{ cookie: string } | { checkpoint: true; state: import("@/lib/types").CheckpointState; message: string }> {
   if (platform === "instagram") {
     const { loginInstagramPlaywright } = await import("@/lib/instagram/login-playwright");
-    return loginInstagramPlaywright({
+    const settings = await getSettings(true);
+    const result = await loginInstagramPlaywright({
       username: account.label,
       password: account.password,
       totp_secret: account.totp_secret,
+      capsolver_api_key: settings.capsolver_api_key ?? null,
     });
+    if (result.ok) return { cookie: result.cookie };
+    if (result.checkpoint) return { checkpoint: true, state: result.state, message: result.message };
+    throw new Error(result.error);
   }
   const { loginAndExtractCookie } = await import("@/lib/youtube/refresh-cookie");
-  return loginAndExtractCookie({
-    email: account.label,
-    password: account.password,
-    totpSecret: account.totp_secret,
-  });
+  const cookie = await loginAndExtractCookie({ email: account.label, password: account.password, totpSecret: account.totp_secret });
+  return { cookie };
 }
 
 export async function addManagedAccount(
   platform: Platform,
-  data: { label: string; password: string; totp_secret?: string },
-): Promise<{ ok?: true; error?: string }> {
+  data: { label: string; account_email?: string; password?: string; totp_secret?: string; cookie?: string },
+): Promise<{ ok?: true; error?: string; checkpoint?: boolean }> {
   await requireUser();
   const settings = await getSettings(true);
   const key = accountsKey(platform);
@@ -227,26 +229,61 @@ export async function addManagedAccount(
     return { error: "Account already added" };
   }
 
+  if (!data.password && !data.cookie) {
+    return { error: "Provide either a session cookie or a password" };
+  }
+
   const id = crypto.randomUUID();
+
+  // Cookie-paste flow: save directly, no login attempt needed.
+  if (data.cookie) {
+    const trimmed = data.cookie.trim();
+    const normalised = trimmed.includes("sessionid=") ? trimmed : `sessionid=${trimmed}`;
+    const newAccount: ManagedAccount = {
+      id,
+      label: data.label,
+      account_email: data.account_email || null,
+      password: data.password || "",
+      totp_secret: data.totp_secret || null,
+      cookie: normalised,
+      cookie_set_at: new Date().toISOString(),
+      last_error: null,
+      checkpoint_state: null,
+    };
+    await updateSettings({ [key]: [...accounts, newAccount] } as Partial<AppSettings>);
+    revalidatePath("/settings");
+    return { ok: true };
+  }
+
+  // Auto-login flow: attempt login with password.
   const newAccount: ManagedAccount = {
     id,
     label: data.label,
-    password: data.password,
+    account_email: data.account_email || null,
+    password: data.password!,
     totp_secret: data.totp_secret || null,
     cookie: null,
     cookie_set_at: null,
     last_error: null,
+    checkpoint_state: null,
   };
 
   // Save the account first so it shows up in the list even if login fails.
   await updateSettings({ [key]: [...accounts, newAccount] } as Partial<AppSettings>);
 
-  // Attempt immediate login.
   try {
-    const cookie = await loginManaged(platform, newAccount);
+    const result = await loginManaged(platform, newAccount);
     const fresh = await getSettings(true);
+    if ("checkpoint" in result) {
+      const updated = ((fresh[key] as ManagedAccount[]) ?? []).map((a) =>
+        a.id === id ? { ...a, checkpoint_state: result.state, last_error: result.message } : a,
+      );
+      await updateSettings({ [key]: updated } as Partial<AppSettings>);
+      revalidatePath("/settings");
+      return { error: result.message, checkpoint: true };
+    }
     const updated = ((fresh[key] as ManagedAccount[]) ?? []).map((a) =>
-      a.id === id ? { ...a, cookie, cookie_set_at: new Date().toISOString(), last_error: null } : a,
+      a.id === id ? { ...a, cookie: result.cookie, cookie_set_at: new Date().toISOString(), last_error: null, checkpoint_state: null } : a,
     );
     await updateSettings({ [key]: updated } as Partial<AppSettings>);
   } catch (err) {
@@ -264,6 +301,66 @@ export async function addManagedAccount(
   return { ok: true };
 }
 
+export async function submitCheckpointCode(
+  platform: Platform,
+  id: string,
+  code: string,
+): Promise<{ ok?: true; error?: string }> {
+  await requireUser();
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  const account = accounts.find((a) => a.id === id);
+  if (!account) return { error: "Account not found" };
+  if (!account.checkpoint_state) return { error: "No checkpoint in progress" };
+
+  const { submitInstagramCheckpointCode } = await import("@/lib/instagram/login-playwright");
+  const result = await submitInstagramCheckpointCode(account.checkpoint_state, code);
+
+  if (!result.ok) {
+    const errMsg = "error" in result ? result.error : result.message;
+    const updated = accounts.map((a) => a.id === id ? { ...a, last_error: errMsg } : a);
+    await updateSettings({ [key]: updated } as Partial<AppSettings>);
+    revalidatePath("/settings");
+    return { error: errMsg };
+  }
+
+  const updated = accounts.map((a) =>
+    a.id === id ? { ...a, cookie: result.cookie, cookie_set_at: new Date().toISOString(), last_error: null, checkpoint_state: null } : a,
+  );
+  await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function setManagedAccountCookie(platform: Platform, id: string, cookie: string): Promise<{ ok?: true; error?: string }> {
+  await requireUser();
+  const trimmed = cookie.trim();
+  if (!trimmed) return { error: "Cookie is empty" };
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  if (!accounts.find((a) => a.id === id)) return { error: "Account not found" };
+  // Normalise: user may paste just the sessionid value or the full cookie string
+  const normalised = trimmed.includes("sessionid=") ? trimmed : `sessionid=${trimmed}`;
+  const updated = accounts.map((a) =>
+    a.id === id ? { ...a, cookie: normalised, cookie_set_at: new Date().toISOString(), checkpoint_state: null, last_error: null } : a,
+  );
+  await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function setManagedAccountEmail(platform: Platform, id: string, email: string): Promise<void> {
+  await requireUser();
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  const updated = accounts.map((a) => a.id === id ? { ...a, account_email: email.trim() || null } : a);
+  await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+}
+
 export async function removeManagedAccount(platform: Platform, id: string): Promise<void> {
   await requireUser();
   const settings = await getSettings(true);
@@ -276,7 +373,7 @@ export async function removeManagedAccount(platform: Platform, id: string): Prom
 export async function refreshManagedAccount(
   platform: Platform,
   id: string,
-): Promise<{ ok?: true; error?: string }> {
+): Promise<{ ok?: true; error?: string; checkpoint?: boolean }> {
   await requireUser();
   const settings = await getSettings(true);
   const key = accountsKey(platform);
@@ -285,13 +382,24 @@ export async function refreshManagedAccount(
   if (!account) return { error: "Account not found" };
 
   try {
-    const cookie = await loginManaged(platform, account);
+    const result = await loginManaged(platform, account);
+    console.log("[refreshManagedAccount]", account.label, "result keys:", Object.keys(result));
+    if ("checkpoint" in result) {
+      console.log("[refreshManagedAccount] saving checkpoint_state for", account.label);
+      const updated = accounts.map((a) =>
+        a.id === id ? { ...a, checkpoint_state: result.state, last_error: result.message } : a,
+      );
+      await updateSettings({ [key]: updated } as Partial<AppSettings>);
+      revalidatePath("/settings");
+      return { error: result.message, checkpoint: true };
+    }
     const updated = accounts.map((a) =>
-      a.id === id ? { ...a, cookie, cookie_set_at: new Date().toISOString(), last_error: null } : a,
+      a.id === id ? { ...a, cookie: result.cookie, cookie_set_at: new Date().toISOString(), last_error: null, checkpoint_state: null } : a,
     );
     await updateSettings({ [key]: updated } as Partial<AppSettings>);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    console.error("[refreshManagedAccount] error for", account.label, error);
     const updated = accounts.map((a) => (a.id === id ? { ...a, last_error: error } : a));
     await updateSettings({ [key]: updated } as Partial<AppSettings>);
     revalidatePath("/settings");

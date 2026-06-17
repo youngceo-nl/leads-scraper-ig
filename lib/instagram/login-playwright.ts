@@ -1,218 +1,296 @@
 import { generateTotp } from "@/lib/totp";
+import type { CheckpointState } from "@/lib/types";
 
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-const AUTH_COOKIE_NAMES = new Set([
-  "sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "ig_nrcb", "rur",
-]);
-
-async function dismissAnyDialog(page: import("playwright").Page) {
-  const dismissSelectors = [
-    // Cookie consent (EU)
-    'button:has-text("Allow all cookies")',
-    'button:has-text("Accept all")',
-    'button:has-text("Allow essential and optional cookies")',
-    '[data-testid="cookie-policy-manage-dialog-accept-button"]',
-    // Generic overlays
-    'button:has-text("Not Now")',
-    'button:has-text("Close")',
-  ];
-  for (const sel of dismissSelectors) {
-    try {
-      const btn = page.locator(sel).first();
-      if (await btn.isVisible({ timeout: 1_500 })) {
-        await btn.click();
-        await page.waitForTimeout(800);
-      }
-    } catch { /* not present */ }
-  }
-}
+export type LoginResult =
+  | { ok: true; cookie: string }
+  | { ok: false; checkpoint: true; state: CheckpointState; message: string }
+  | { ok: false; checkpoint?: false; error: string };
 
 export async function loginInstagramPlaywright(creds: {
   username: string;
   password: string;
   totp_secret?: string | null;
-}): Promise<string> {
-  const { chromium } = await import("playwright");
+  capsolver_api_key?: string | null;
+}): Promise<LoginResult> {
+  const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-  let browser;
+  // Step 1: GET homepage for initial cookies + CSRF token
+  let homeRes: Response;
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
+    homeRes = await fetch("https://www.instagram.com/", {
+      headers: { "User-Agent": ua, "Accept": "text/html,*/*", "Accept-Language": "en-US,en;q=0.9" },
     });
-  } catch {
-    browser = await chromium.launch({ headless: true });
+  } catch (err) {
+    return { ok: false, error: `Network error reaching Instagram: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const context = await browser.newContext({
-    userAgent: UA,
-    locale: "en-US",
-    viewport: { width: 1280, height: 900 },
-    extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
+  const cookieMap = parseCookies(homeRes.headers.getSetCookie?.() ?? []);
+  const csrf = cookieMap.get("csrftoken");
+  if (!csrf) return { ok: false, error: "Could not get CSRF token from Instagram — check network connectivity" };
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const encPassword = `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${creds.password}`;
+
+  const baseHeaders = (extra: Record<string, string> = {}) => ({
+    "User-Agent": ua,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "X-CSRFToken": cookieMap.get("csrftoken") ?? csrf,
+    "X-IG-App-ID": "936619743392459",
+    "X-Instagram-AJAX": "1",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://www.instagram.com/",
+    "Cookie": cookieStr(cookieMap),
+    ...extra,
   });
 
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-    Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3] });
-    // @ts-expect-error intentional
-    window.chrome = { runtime: {} };
+  // Step 2: POST login
+  const loginRes = await fetch("https://www.instagram.com/api/v1/web/accounts/login/ajax/", {
+    method: "POST",
+    headers: baseHeaders(),
+    body: new URLSearchParams({ username: creds.username, enc_password: encPassword, queryParams: "{}", optIntoOneTap: "false" }).toString(),
   });
 
+  mergeCookies(cookieMap, loginRes.headers.getSetCookie?.() ?? []);
+
+  // Instagram sometimes redirects the login POST to a challenge page (HTML) instead
+  // of returning JSON — detect this by checking the final URL after redirect-follow.
+  const finalUrl = loginRes.url ?? "";
+  const isRedirectedToChallenge = finalUrl.includes("/challenge/") || finalUrl.includes("/checkpoint/");
+
+  let json: Record<string, unknown>;
   try {
-    const page = await context.newPage();
-
-    // Navigate and wait for the network to quiet down
-    try {
-      await page.goto("https://www.instagram.com/accounts/login/", {
-        waitUntil: "networkidle",
-        timeout: 30_000,
-      });
-    } catch {
-      // networkidle timeout is common — the page is usually ready enough
+    json = await loginRes.json();
+  } catch {
+    if (isRedirectedToChallenge) {
+      return handleCheckpoint(finalUrl, cookieMap, csrf, baseHeaders);
     }
-
-    // Give JS a moment to render and dismiss any dialogs
-    await page.waitForTimeout(2_000);
-    await dismissAnyDialog(page);
-    await page.waitForTimeout(500);
-
-    // Confirm we're actually on the login page
-    const currentUrl = page.url();
-    const pageText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-
-    // If Instagram redirected us somewhere unexpected, report it clearly
-    if (!currentUrl.includes("instagram.com")) {
-      throw new Error(`Unexpected redirect to: ${currentUrl.slice(0, 150)}`);
-    }
-    if (pageText.includes("challenge") || currentUrl.includes("/challenge/")) {
-      throw new Error("Instagram requires a challenge (CAPTCHA or identity check) — log in manually in a browser first to clear it");
-    }
-
-    // Instagram renders inputs with varying attributes across versions —
-    // try name= first, then aria-label, then placeholder.
-    const usernameSelectors = [
-      'input[name="username"]',
-      'input[aria-label*="username" i]',
-      'input[aria-label*="phone" i]',
-      'input[aria-label*="email" i]',
-      'input[placeholder*="username" i]',
-      'input[placeholder*="phone" i]',
-      'input[autocomplete="username"]',
-    ];
-    let usernameInput: import("playwright").Locator | null = null;
-    for (const sel of usernameSelectors) {
-      const loc = page.locator(sel).first();
-      const found = await loc.isVisible({ timeout: 3_000 }).catch(() => false);
-      if (found) { usernameInput = loc; break; }
-    }
-    if (!usernameInput) {
-      const snippet = pageText.slice(0, 300).replace(/\s+/g, " ");
-      throw new Error(`Login form not found on page. URL: ${currentUrl.slice(0, 100)} | Page text: "${snippet}"`);
-    }
-
-    await usernameInput.click();
-    await usernameInput.fill(creds.username);
-    await page.waitForTimeout(400);
-
-    const passwordSelectors = [
-      'input[name="password"]',
-      'input[aria-label*="password" i]',
-      'input[placeholder*="password" i]',
-      'input[type="password"]',
-    ];
-    let passwordInput: import("playwright").Locator | null = null;
-    for (const sel of passwordSelectors) {
-      const loc = page.locator(sel).first();
-      const found = await loc.isVisible({ timeout: 2_000 }).catch(() => false);
-      if (found) { passwordInput = loc; break; }
-    }
-    if (!passwordInput) throw new Error("Password field not found on login page");
-    await passwordInput.waitFor({ state: "visible", timeout: 5_000 });
-    await passwordInput.click();
-    await passwordInput.fill(creds.password);
-    await page.waitForTimeout(400);
-
-    // Submit
-    const submitSelectors = [
-      'button[type="submit"]',
-      'button:has-text("Log in")',
-      'button:has-text("Log In")',
-      '[data-testid="royal_login_button"]',
-    ];
-    let submitted = false;
-    for (const sel of submitSelectors) {
-      try {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 2_000 })) {
-          await btn.click();
-          submitted = true;
-          break;
-        }
-      } catch { /* try next */ }
-    }
-    if (!submitted) await passwordInput!.press("Enter");
-
-    await page.waitForTimeout(5_000);
-
-    // 2FA
-    const totpInput = page
-      .locator('input[name="verificationCode"], input[aria-label*="verification" i], input[aria-label*="code" i], input[aria-label*="security" i]')
-      .first();
-    const totpVisible = await totpInput.isVisible().catch(() => false);
-
-    if (totpVisible) {
-      if (!creds.totp_secret) throw new Error("Instagram requires 2FA but no TOTP secret is configured");
-      await totpInput.fill(generateTotp(creds.totp_secret));
-      const confirmBtn = page.locator('button[type="submit"], button:has-text("Confirm")').first();
-      await confirmBtn.click();
-      await page.waitForTimeout(4_000);
-    }
-
-    // Dismiss interstitials
-    for (let i = 0; i < 4; i++) {
-      const skip = page.getByRole("button", { name: /not now|skip|cancel|later/i }).first();
-      if ((await skip.count()) === 0) break;
-      await skip.click({ timeout: 3_000 }).catch(() => {});
-      await page.waitForTimeout(800);
-    }
-
-    // Detect error messages
-    const body = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-    const blocks: Array<[RegExp, string]> = [
-      [/incorrect password|wrong password/i, "Incorrect password — double-check it in Settings"],
-      [/we detected an unusual login attempt/i, "Instagram flagged the login as unusual — log in manually once in a browser to clear it"],
-      [/your account has been disabled/i, "This Instagram account has been disabled"],
-      [/we couldn.?t log you in/i, "Instagram could not log in — check credentials"],
-      [/suspicious activity/i, "Instagram detected suspicious activity — log in manually once to clear it"],
-      [/challenge_required|confirm.*identity/i, "Instagram requires identity confirmation — log in manually once to clear it"],
-    ];
-    for (const [re, msg] of blocks) {
-      if (re.test(body)) throw new Error(msg);
-    }
-
-    const finalUrl = page.url();
-    if (finalUrl.includes("/accounts/login/") || finalUrl.includes("/challenge/")) {
-      const snippet = body.slice(0, 200).replace(/\s+/g, " ");
-      throw new Error(`Still on login/challenge page after submit. URL: ${finalUrl.slice(0, 100)} | "${snippet}"`);
-    }
-
-    const cookies = await context.cookies(["https://www.instagram.com", "https://instagram.com"]);
-    if (!cookies.some((c) => c.name === "sessionid")) {
-      throw new Error(`Login did not produce a sessionid cookie — ended at ${finalUrl.slice(0, 100)}`);
-    }
-
-    const auth = cookies.filter((c) => AUTH_COOKIE_NAMES.has(c.name));
-    return auth.map((c) => `${c.name}=${c.value}`).join("; ");
-  } finally {
-    await browser.close().catch(() => {});
+    console.error("[ig-login] non-JSON response", loginRes.status, finalUrl);
+    return { ok: false, error: `Instagram returned non-JSON (status ${loginRes.status})` };
   }
+
+  // Also handle the case where JSON was returned at a challenge URL
+  if (isRedirectedToChallenge && !json.authenticated) {
+    return handleCheckpoint(finalUrl, cookieMap, csrf, baseHeaders);
+  }
+
+  // 2FA
+  if (json.two_factor_required) {
+    if (!creds.totp_secret) return { ok: false, error: "Instagram requires 2FA but no TOTP secret is configured" };
+    const tfInfo = (json.two_factor_info ?? {}) as Record<string, string>;
+    const totp = generateTotp(creds.totp_secret);
+    const tfRes = await fetch("https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/", {
+      method: "POST",
+      headers: baseHeaders(),
+      body: new URLSearchParams({ username: creds.username, verificationCode: totp, identifier: tfInfo.two_factor_identifier ?? "", queryParams: "{}", trustThisDevice: "0", verificationMethod: "3" }).toString(),
+    });
+    mergeCookies(cookieMap, tfRes.headers.getSetCookie?.() ?? []);
+    let tfJson: Record<string, unknown> = {};
+    try { tfJson = await tfRes.json(); } catch { /* ignore */ }
+    if (!tfJson.authenticated) return { ok: false, error: "2FA verification failed — check your TOTP secret" };
+    return buildCookieResult(cookieMap);
+  }
+
+  // Checkpoint (phone/email verification)
+  if (json.message === "checkpoint_required" || json.checkpoint_url) {
+    console.error("[ig-login] checkpoint_required full json:", JSON.stringify(json));
+    const emailFromLogin = extractEmail(json);
+    const checkpointPath = (json.checkpoint_url as string) ?? "";
+    const challengeUrl = checkpointPath.startsWith("http") ? checkpointPath : `https://www.instagram.com${checkpointPath}`;
+    return handleCheckpoint(challengeUrl, cookieMap, csrf, baseHeaders, emailFromLogin, creds.capsolver_api_key ?? null);
+  }
+
+  if (!json.authenticated) {
+    const msg = typeof json.message === "string" ? json.message : JSON.stringify(json);
+    return { ok: false, error: `Login rejected by Instagram: ${msg}` };
+  }
+
+  return buildCookieResult(cookieMap);
+}
+
+export async function submitInstagramCheckpointCode(
+  state: CheckpointState,
+  code: string,
+): Promise<LoginResult> {
+  // The /auth_platform/ flow is a React SPA that can't be driven by plain fetch —
+  // use Playwright to navigate back to the challenge page (CAPTCHA already passed,
+  // so it shows the code entry form) and submit the code via the UI.
+  if (state.challenge_url.includes("/auth_platform/")) {
+    const { submitAuthPlatformCode } = await import("@/lib/instagram/captcha");
+    return submitAuthPlatformCode(state.challenge_url, state.cookies, state.csrf, code);
+  }
+
+  // Legacy /challenge/ flow — plain fetch works here.
+  const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  const cookieMap = new Map<string, string>();
+
+  for (const part of state.cookies.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq !== -1) cookieMap.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+  }
+
+  const headers = {
+    "User-Agent": ua,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "X-CSRFToken": state.csrf,
+    "X-IG-App-ID": "936619743392459",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": state.challenge_url,
+    "Cookie": state.cookies,
+  };
+
+  const res = await fetch(state.challenge_url, {
+    method: "POST",
+    headers,
+    body: new URLSearchParams({ security_code: code.trim() }).toString(),
+  });
+
+  mergeCookies(cookieMap, res.headers.getSetCookie?.() ?? []);
+
+  let json: Record<string, unknown> = {};
+  try { json = await res.json(); } catch { /* might redirect */ }
+
+  if (json.status === "ok" || cookieMap.has("sessionid")) {
+    return buildCookieResult(cookieMap);
+  }
+
+  return { ok: false, error: `Invalid code: ${typeof json.message === "string" ? json.message : "try again"}` };
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+async function handleCheckpoint(
+  challengeUrl: string,
+  cookieMap: Map<string, string>,
+  csrf: string,
+  baseHeaders: (extra?: Record<string, string>) => Record<string, string>,
+  seedEmail: string | null = null,
+  capsolverApiKey: string | null = null,
+): Promise<LoginResult> {
+  let emailHint: string | null = seedEmail;
+
+  // ── /auth_platform/ flow: requires CAPTCHA bypass via CapSolver ──────────
+  if (challengeUrl.includes("/auth_platform/") && capsolverApiKey) {
+    console.error("[ig-login] /auth_platform/ checkpoint detected — attempting CapSolver bypass");
+    const { bypassInstagramCaptcha } = await import("@/lib/instagram/captcha");
+    const updatedCookies = await bypassInstagramCaptcha(challengeUrl, cookieStr(cookieMap), capsolverApiKey);
+    if (updatedCookies) {
+      // Merge updated cookies back into our map
+      for (const part of updatedCookies.split(";")) {
+        const eq = part.indexOf("=");
+        if (eq !== -1) cookieMap.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+      }
+      console.error("[ig-login] CapSolver bypass succeeded — email should be sent");
+    } else {
+      console.error("[ig-login] CapSolver bypass failed — user must solve CAPTCHA manually or retry");
+    }
+
+    return {
+      ok: false,
+      checkpoint: true,
+      state: {
+        cookies: cookieStr(cookieMap),
+        csrf: cookieMap.get("csrftoken") ?? csrf,
+        challenge_url: challengeUrl,
+        email_hint: emailHint,
+      },
+      message: updatedCookies
+        ? "Instagram sent a verification code to the account email. Enter it below to complete login."
+        : "Instagram requires CAPTCHA verification. CapSolver bypass failed — try refreshing again or check your CapSolver API key.",
+    };
+  }
+
+  // ── Legacy /challenge/ flow: plain fetch works ────────────────────────────
+
+  // GET the challenge page — Instagram may return JSON with step_data.contact_point or HTML with masked email
+  try {
+    const challengeRes = await fetch(challengeUrl, { headers: baseHeaders() });
+    mergeCookies(cookieMap, challengeRes.headers.getSetCookie?.() ?? []);
+    const body = await challengeRes.text();
+    try {
+      emailHint = extractEmail(JSON.parse(body) as Record<string, unknown>);
+    } catch { /* HTML */ }
+    if (!emailHint) emailHint = extractEmailFromHtml(body);
+    console.error("[ig-login] challenge GET body (first 500):", body.slice(0, 500));
+  } catch { /* best-effort */ }
+
+  // POST choice=1 to trigger email verification; response often contains contact point
+  try {
+    const choiceRes = await fetch(challengeUrl, {
+      method: "POST",
+      headers: baseHeaders({ "Referer": challengeUrl }),
+      body: new URLSearchParams({ choice: "1" }).toString(),
+    });
+    mergeCookies(cookieMap, choiceRes.headers.getSetCookie?.() ?? []);
+    console.error("[ig-login] triggered email choice, status", choiceRes.status);
+    const choiceBody = await choiceRes.text();
+    console.error("[ig-login] choice POST body (first 500):", choiceBody.slice(0, 500));
+    try {
+      emailHint = extractEmail(JSON.parse(choiceBody) as Record<string, unknown>) ?? emailHint;
+    } catch { /* HTML */ }
+    if (!emailHint) emailHint = extractEmailFromHtml(choiceBody) ?? emailHint;
+  } catch (e) {
+    console.error("[ig-login] email choice POST failed", e);
+  }
+
+  console.error("[ig-login] email_hint:", emailHint);
+  return {
+    ok: false,
+    checkpoint: true,
+    state: { cookies: cookieStr(cookieMap), csrf: cookieMap.get("csrftoken") ?? csrf, challenge_url: challengeUrl, email_hint: emailHint },
+    message: "Instagram sent a verification code to the account email. Enter it below to complete login.",
+  };
+}
+
+function extractEmail(json: Record<string, unknown>): string | null {
+  // Instagram returns contact info in various shapes depending on the challenge type
+  const step = json.step_data as Record<string, unknown> | undefined;
+  if (typeof step?.contact_point === "string") return step.contact_point;
+  if (typeof step?.email === "string") return step.email;
+  if (typeof json.contact_point === "string") return json.contact_point as string;
+  if (typeof json.email === "string") return json.email as string;
+  // Some flows nest it under challenge_type_enum_map
+  const nested = json.challenge_type_enum_map as Record<string, unknown> | undefined;
+  if (nested) {
+    for (const v of Object.values(nested)) {
+      const r = v as Record<string, unknown> | undefined;
+      if (typeof r?.contact_point === "string") return r.contact_point;
+    }
+  }
+  return null;
+}
+
+function extractEmailFromHtml(html: string): string | null {
+  // Matches masked emails like n****@gmail.com or ab***@yahoo.co.uk
+  const m = html.match(/[a-zA-Z0-9._%+*-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return m ? m[0] : null;
+}
+
+function parseCookies(raw: string[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const header of raw) {
+    const [pair] = header.split(";");
+    const eq = pair.indexOf("=");
+    if (eq !== -1) m.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+  return m;
+}
+
+function mergeCookies(map: Map<string, string>, raw: string[]) {
+  for (const [k, v] of parseCookies(raw)) map.set(k, v);
+}
+
+function cookieStr(map: Map<string, string>): string {
+  return [...map.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+const AUTH = new Set(["sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "ig_nrcb", "rur"]);
+
+function buildCookieResult(map: Map<string, string>): LoginResult {
+  if (!map.has("sessionid")) return { ok: false, error: "Login succeeded but no sessionid cookie returned" };
+  const cookie = [...map.entries()].filter(([k]) => AUTH.has(k)).map(([k, v]) => `${k}=${v}`).join("; ");
+  return { ok: true, cookie };
 }

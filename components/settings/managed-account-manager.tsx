@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { addManagedAccount, refreshManagedAccount } from "@/app/actions/settings";
+import { useRouter } from "next/navigation";
+import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, setManagedAccountCookie } from "@/app/actions/settings";
 import type { ManagedAccountDisplay } from "@/lib/types";
 
 function relativeTime(iso: string | null): string {
@@ -18,6 +19,7 @@ function relativeTime(iso: string | null): string {
 }
 
 function statusLabel(account: ManagedAccountDisplay): { color: string; text: string; Icon: React.ElementType } {
+  if (account.checkpoint_state) return { color: "text-amber-600", text: "Verification needed", Icon: AlertTriangle };
   if (account.cookie && !account.last_error) return { color: "text-green-600", text: "Active", Icon: CheckCircle2 };
   if (account.cookie && account.last_error) return { color: "text-amber-600", text: "Active (refresh failed)", Icon: AlertTriangle };
   if (!account.cookie && account.last_error) return { color: "text-destructive", text: "Login failed", Icon: XCircle };
@@ -57,9 +59,55 @@ function AccountCard({
   onRemove: () => void;
   refreshing: boolean;
 }) {
+  const isCheckpoint = !!account.checkpoint_state;
   const { color, text, Icon } = statusLabel(account);
   const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [submittingCode, setSubmittingCode] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(account.account_email ?? "");
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [cookieDraft, setCookieDraft] = useState("");
+  const [savingCookie, setSavingCookie] = useState(false);
+  const [cookieError, setCookieError] = useState<string | null>(null);
+  const [showPasteCookie, setShowPasteCookie] = useState(false);
+  const router = useRouter();
+
+  const handleSaveEmail = async () => {
+    setSavingEmail(true);
+    await setManagedAccountEmail(platform, account.id, emailDraft);
+    setSavingEmail(false);
+    router.refresh();
+  };
+
+  const handlePasteCookie = async () => {
+    if (!cookieDraft.trim()) return;
+    setSavingCookie(true);
+    setCookieError(null);
+    const res = await setManagedAccountCookie(platform, account.id, cookieDraft.trim());
+    setSavingCookie(false);
+    if (res.error) {
+      setCookieError(res.error);
+    } else {
+      setCookieDraft("");
+      setShowPasteCookie(false);
+      window.location.reload();
+    }
+  };
+
+  const handleCodeSubmit = async () => {
+    setSubmittingCode(true);
+    setCodeError(null);
+    const res = await submitCheckpointCode(platform, account.id, code);
+    if (res.error) {
+      setCodeError(res.error);
+    } else {
+      setCode("");
+      router.refresh();
+    }
+    setSubmittingCode(false);
+  };
 
   return (
     <div className="rounded-md border bg-card">
@@ -67,7 +115,12 @@ function AccountCard({
       <div className="flex items-center justify-between gap-3 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />
-          <span className="text-sm font-medium truncate">{account.label}</span>
+          <span className="text-sm font-medium truncate">@{account.label}</span>
+          {account.account_email && (
+            <span className="text-xs text-muted-foreground shrink-0 truncate max-w-[160px]" title={account.account_email}>
+              {account.account_email}
+            </span>
+          )}
           <span className={`text-xs ${color} shrink-0`}>{text}</span>
           <span className="text-xs text-muted-foreground shrink-0">
             · refreshed {relativeTime(account.cookie_set_at)}
@@ -126,10 +179,134 @@ function AccountCard({
             )}
           </div>
         )}
+
+        {/* Paste cookie manually — bypasses login/CAPTCHA entirely */}
+        {platform === "instagram" && (
+          <div className="mt-2">
+            {showPasteCookie ? (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">
+                  Log into Instagram as{" "}
+                  <span className="font-medium text-foreground">@{account.label}</span>
+                  {account.account_email && (
+                    <> ({account.account_email})</>
+                  )}{" "}
+                  in Chrome, then: <kbd className="text-xs bg-muted px-1 rounded">F12</kbd> → Application → Cookies → instagram.com → copy the <code className="text-xs">sessionid</code> value
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    value={cookieDraft}
+                    onChange={(e) => setCookieDraft(e.target.value)}
+                    placeholder="Paste sessionid or full cookie string…"
+                    className="h-7 text-xs flex-1 font-mono"
+                    onKeyDown={(e) => e.key === "Enter" && !savingCookie && handlePasteCookie()}
+                  />
+                  <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-xs"
+                    disabled={savingCookie || !cookieDraft.trim()} onClick={handlePasteCookie}>
+                    {savingCookie ? "Saving…" : "Save"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                    onClick={() => { setShowPasteCookie(false); setCookieDraft(""); setCookieError(null); }}>
+                    Cancel
+                  </Button>
+                </div>
+                {cookieError && <p className="text-xs text-destructive">{cookieError}</p>}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowPasteCookie(true)}
+                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+              >
+                Paste cookie from browser
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Inline email field — always visible so user can set it without re-adding the account */}
+        {platform === "instagram" && (
+          <div className="flex items-center gap-2 mt-2">
+            <Input
+              value={emailDraft}
+              onChange={(e) => setEmailDraft(e.target.value)}
+              placeholder="Account email (shown during verification)"
+              type="email"
+              className="h-7 text-xs flex-1"
+              onKeyDown={(e) => e.key === "Enter" && !savingEmail && handleSaveEmail()}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              disabled={savingEmail || emailDraft === (account.account_email ?? "")}
+              onClick={handleSaveEmail}
+            >
+              {savingEmail ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        )}
       </div>
 
+      {/* Checkpoint verification row */}
+      {isCheckpoint && (
+        <div className="border-t px-3 py-2.5 space-y-2.5">
+          {account.account_email || account.checkpoint_state?.email_hint ? (
+            <p className="text-xs text-amber-600 font-medium">
+              Instagram sent a verification code to{" "}
+              <span className="font-mono font-semibold">
+                {account.account_email || account.checkpoint_state?.email_hint}
+              </span>. Enter it below:
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <p className="text-xs text-amber-600 font-medium">
+                Instagram sent a verification code for{" "}
+                <span className="font-mono">@{account.label}</span>.
+                What email is linked to this account?
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={emailDraft}
+                  onChange={(e) => setEmailDraft(e.target.value)}
+                  placeholder="email@example.com"
+                  type="email"
+                  className="h-7 text-xs flex-1"
+                  onKeyDown={(e) => e.key === "Enter" && !savingEmail && handleSaveEmail()}
+                />
+                <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
+                  disabled={savingEmail || !emailDraft.includes("@")} onClick={handleSaveEmail}>
+                  {savingEmail ? "…" : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="6-digit code"
+              maxLength={8}
+              className="h-8 text-sm font-mono w-36"
+              onKeyDown={(e) => e.key === "Enter" && !submittingCode && handleCodeSubmit()}
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={submittingCode || code.length < 4}
+              onClick={handleCodeSubmit}
+              className="h-8"
+            >
+              {submittingCode ? "Verifying…" : "Verify"}
+            </Button>
+          </div>
+          {codeError && <p className="text-xs text-destructive">{codeError}</p>}
+        </div>
+      )}
+
       {/* Error row */}
-      {account.last_error && (
+      {account.last_error && !isCheckpoint && (
         <div className="border-t px-3 py-1.5">
           <p className="text-xs text-destructive" title={account.last_error}>
             Last error: {account.last_error}
@@ -152,24 +329,35 @@ export function ManagedAccountManager({
   const isIg = platform === "instagram";
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
-  const [, startGlobal] = useTransition();
 
   const [label, setLabel] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [cookiePaste, setCookiePaste] = useState("");
+  const [showAutoLogin, setShowAutoLogin] = useState(false);
   const [password, setPassword] = useState("");
   const [totpSecret, setTotpSecret] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [addPending, startAdd] = useTransition();
   const [addResult, setAddResult] = useState<{ ok?: true; error?: string } | null>(null);
 
+  const router = useRouter();
+
   const setRefreshing = (id: string, val: boolean) =>
     setRefreshingIds((prev) => { const s = new Set(prev); val ? s.add(id) : s.delete(id); return s; });
 
-  const handleRefresh = (id: string) => {
+  const handleRefresh = async (id: string) => {
     setRefreshing(id, true);
-    startGlobal(async () => {
-      await refreshManagedAccount(platform, id);
+    try {
+      const result = await refreshManagedAccount(platform, id);
+      if (result.checkpoint) {
+        // checkpoint_state is now saved in DB — hard reload guarantees the verify box appears
+        window.location.reload();
+        return;
+      }
+      router.refresh();
+    } finally {
       setRefreshing(id, false);
-    });
+    }
   };
 
   // Queue the deletion locally — parent commits it on form Save, cancels on Discard.
@@ -179,16 +367,22 @@ export function ManagedAccountManager({
   };
 
   const handleAdd = () => {
-    if (!label.trim() || !password.trim()) return;
+    if (!label.trim()) return;
+    if (!cookiePaste.trim() && !password.trim()) return;
     setAddResult(null);
     startAdd(async () => {
       const res = await addManagedAccount(platform, {
         label: label.trim(),
-        password: password.trim(),
+        account_email: accountEmail.trim() || undefined,
+        cookie: cookiePaste.trim() || undefined,
+        password: password.trim() || undefined,
         totp_secret: totpSecret.trim() || undefined,
       });
       setAddResult(res ?? { ok: true });
-      if (res.ok) { setLabel(""); setPassword(""); setTotpSecret(""); }
+      if (res.ok) {
+        setLabel(""); setAccountEmail(""); setCookiePaste(""); setPassword(""); setTotpSecret("");
+        window.location.reload();
+      }
     });
   };
 
@@ -201,7 +395,7 @@ export function ManagedAccountManager({
           account={account}
           platform={platform}
           refreshing={refreshingIds.has(account.id)}
-          onRefresh={() => handleRefresh(account.id)}
+          onRefresh={() => void handleRefresh(account.id)}
           onRemove={() => handleRemove(account.id)}
         />
       ))}
@@ -212,6 +406,7 @@ export function ManagedAccountManager({
       <div className="space-y-3">
         <p className="text-xs font-medium text-muted-foreground">Add account</p>
 
+        {/* Username + email always shown */}
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
             <Label htmlFor={`${platform}-label`} className="text-xs">
@@ -226,6 +421,94 @@ export function ManagedAccountManager({
               className="h-8 text-sm"
             />
           </div>
+          {isIg && (
+            <div className="space-y-1">
+              <Label htmlFor={`${platform}-email`} className="text-xs">Account email</Label>
+              <Input
+                id={`${platform}-email`}
+                type="email"
+                value={accountEmail}
+                onChange={(e) => setAccountEmail(e.target.value)}
+                placeholder="email@example.com"
+                autoComplete="off"
+                className="h-8 text-sm"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Primary flow: paste cookie from browser */}
+        {isIg && (
+          <div className="space-y-1">
+            <Label htmlFor={`${platform}-cookie-paste`} className="text-xs">
+              Session cookie{" "}
+              <span className="text-muted-foreground font-normal">
+                — Chrome: F12 → Application → Cookies → instagram.com → copy <code className="text-xs">sessionid</code>
+              </span>
+            </Label>
+            <Input
+              id={`${platform}-cookie-paste`}
+              value={cookiePaste}
+              onChange={(e) => setCookiePaste(e.target.value)}
+              placeholder="Paste sessionid value or full cookie string…"
+              autoComplete="off"
+              className="h-8 text-sm font-mono"
+            />
+          </div>
+        )}
+
+        {/* Auto-login toggle (advanced) */}
+        {isIg && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAutoLogin((v) => !v)}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+            >
+              {showAutoLogin ? "Hide auto-login" : "Use password instead (auto-login)"}
+            </button>
+            {showAutoLogin && (
+              <div className="mt-2 space-y-2">
+                <div className="space-y-1">
+                  <Label htmlFor={`${platform}-pw`} className="text-xs">Password</Label>
+                  <div className="relative">
+                    <Input
+                      id={`${platform}-pw`}
+                      type={showPw ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="h-8 text-sm pr-8"
+                    />
+                    <button type="button" tabIndex={-1} onClick={() => setShowPw((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      {showPw ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`${platform}-totp`} className="text-xs">
+                    Authenticator secret{" "}
+                    <span className="text-muted-foreground font-normal">(optional — only if 2FA enabled)</span>
+                  </Label>
+                  <Input
+                    id={`${platform}-totp`}
+                    type="password"
+                    value={totpSecret}
+                    onChange={(e) => setTotpSecret(e.target.value)}
+                    placeholder="Base32 secret (JBSWY3DP…)"
+                    autoComplete="off"
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* YouTube: keep original password form */}
+        {!isIg && (
           <div className="space-y-1">
             <Label htmlFor={`${platform}-pw`} className="text-xs">Password</Label>
             <div className="relative">
@@ -244,39 +527,23 @@ export function ManagedAccountManager({
               </button>
             </div>
           </div>
-        </div>
-
-        <div className="space-y-1">
-          <Label htmlFor={`${platform}-totp`} className="text-xs">
-            Authenticator secret{" "}
-            <span className="text-muted-foreground font-normal">(optional — only if 2FA is enabled)</span>
-          </Label>
-          <Input
-            id={`${platform}-totp`}
-            type="password"
-            value={totpSecret}
-            onChange={(e) => setTotpSecret(e.target.value)}
-            placeholder="Base32 secret (JBSWY3DP…)"
-            autoComplete="off"
-            className="h-8 text-sm"
-          />
-        </div>
+        )}
 
         <div className="flex items-center gap-3">
           <Button
             type="button"
             size="sm"
             variant="secondary"
-            disabled={addPending || !label.trim() || !password.trim()}
+            disabled={addPending || !label.trim() || (!cookiePaste.trim() && !password.trim())}
             onClick={handleAdd}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${addPending ? "animate-spin" : ""}`} />
-            {addPending ? "Logging in…" : "Add & login"}
+            {addPending ? "Saving…" : "Add account"}
           </Button>
 
           {addResult?.ok && (
             <span className="flex items-center gap-1 text-xs text-green-600">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Logged in — cookie is active
+              <CheckCircle2 className="h-3.5 w-3.5" /> Account saved
             </span>
           )}
           {addResult?.error && (
@@ -290,7 +557,7 @@ export function ManagedAccountManager({
 
       <p className="text-xs text-muted-foreground">
         {isIg
-          ? "The scraper rotates between accounts automatically when one gets rate-limited. Cookies auto-refresh every 12h."
+          ? "The scraper rotates between accounts automatically when one gets rate-limited."
           : "The enrichment pipeline cycles through accounts for YouTube email reveal. Cookies auto-refresh every 12h."}
       </p>
     </div>

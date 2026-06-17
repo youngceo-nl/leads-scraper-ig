@@ -4,14 +4,23 @@ export type LeadStatus = "qualified" | "review" | "rejected" | "pending";
 
 // A cookie account managed by the system: credentials are stored so the auto-
 // refresh cron can re-login without user input. Passwords never leave the server.
+export type CheckpointState = {
+  cookies: string;   // cookie header to reuse for code submission
+  csrf: string;
+  challenge_url: string; // full URL to POST the security code to
+  email_hint: string | null; // masked email shown by Instagram, e.g. "n****@gmail.com"
+};
+
 export type ManagedAccount = {
   id: string;
   label: string;          // Instagram username OR Google email — display + login identifier
   password: string;       // server-only: stored for automated re-login
   totp_secret: string | null; // server-only
+  account_email: string | null; // email address associated with the account, shown during checkpoint
   cookie: string | null;
   cookie_set_at: string | null; // ISO timestamp of last successful login
   last_error: string | null;
+  checkpoint_state: CheckpointState | null;
 };
 
 // Password-stripped view sent to client components.

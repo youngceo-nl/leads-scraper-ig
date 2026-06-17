@@ -5,8 +5,9 @@ import type { ManagedAccountDisplay } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-function stripAccount({ id, label, cookie, cookie_set_at, last_error }: { id: string; label: string; password: string; totp_secret: string | null; cookie: string | null; cookie_set_at: string | null; last_error: string | null }): ManagedAccountDisplay {
-  return { id, label, cookie, cookie_set_at, last_error };
+function stripAccount(a: { id: string; label: string; account_email?: string | null; password: string; totp_secret: string | null; cookie: string | null; cookie_set_at: string | null; last_error: string | null; checkpoint_state?: unknown }): ManagedAccountDisplay {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { id: a.id, label: a.label, account_email: a.account_email ?? null, cookie: a.cookie, cookie_set_at: a.cookie_set_at, last_error: a.last_error, checkpoint_state: (a.checkpoint_state ?? null) as any };
 }
 
 export default async function SettingsPage() {

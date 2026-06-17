@@ -30,13 +30,18 @@ export const refreshIgCookies = inngest.createFunction(
         const account = updated[i];
         if (!account.password) { failed++; continue; }
         try {
-          const cookie = await loginInstagramPlaywright({
+          const result = await loginInstagramPlaywright({
             username: account.label,
             password: account.password,
             totp_secret: account.totp_secret,
           });
-          updated[i] = { ...account, cookie, cookie_set_at: new Date().toISOString(), last_error: null };
-          refreshed++;
+          if (result.ok) {
+            updated[i] = { ...account, cookie: result.cookie, cookie_set_at: new Date().toISOString(), last_error: null };
+            refreshed++;
+          } else {
+            updated[i] = { ...account, last_error: result.checkpoint ? result.message : result.error };
+            failed++;
+          }
         } catch (err) {
           updated[i] = { ...account, last_error: err instanceof Error ? err.message : String(err) };
           failed++;
