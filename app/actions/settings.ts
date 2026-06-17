@@ -189,6 +189,29 @@ export async function refreshYtCookieNow(creds?: {
   return { ok: false, error: result.error ?? "Login failed" };
 }
 
+// ── Instagram cookie validation ───────────────────────────────────────────────
+
+async function testInstagramCookieString(
+  cookie: string,
+  username?: string,
+): Promise<{ ok: boolean; message: string }> {
+  const { fetchProfileMetadataDirect, InstagramDirectError } = await import("@/lib/instagram/direct");
+  // Probe the account's own profile — much less rate-limited than mega-accounts like @instagram
+  const probe = username ?? "natgeo";
+  try {
+    const p = await fetchProfileMetadataDirect({ username: probe, sessionCookie: cookie });
+    if (!p) return { ok: false, message: "Cookie may be invalid — Instagram returned no data" };
+    return { ok: true, message: `Cookie valid — successfully fetched @${probe}` };
+  } catch (err) {
+    if (err instanceof InstagramDirectError && err.status === 429) {
+      // Rate-limited on the probe doesn't mean the cookie is bad
+      return { ok: true, message: "Cookie looks valid (rate-limited on probe, but session is present)" };
+    }
+    const msg = err instanceof InstagramDirectError ? err.message : (err instanceof Error ? err.message : String(err));
+    return { ok: false, message: `Cookie rejected: ${msg}` };
+  }
+}
+
 // ── Managed account CRUD (Instagram + YouTube) ────────────────────────────────
 
 type Platform = "instagram" | "youtube";
@@ -235,10 +258,17 @@ export async function addManagedAccount(
 
   const id = crypto.randomUUID();
 
-  // Cookie-paste flow: save directly, no login attempt needed.
+  // Cookie-paste flow: save directly, then validate.
   if (data.cookie) {
     const trimmed = data.cookie.trim();
     const normalised = trimmed.includes("sessionid=") ? trimmed : `sessionid=${trimmed}`;
+
+    let cookieError: string | null = null;
+    if (platform === "instagram") {
+      const result = await testInstagramCookieString(normalised, data.label);
+      if (!result.ok) cookieError = result.message;
+    }
+
     const newAccount: ManagedAccount = {
       id,
       label: data.label,
@@ -247,11 +277,12 @@ export async function addManagedAccount(
       totp_secret: data.totp_secret || null,
       cookie: normalised,
       cookie_set_at: new Date().toISOString(),
-      last_error: null,
+      last_error: cookieError,
       checkpoint_state: null,
     };
     await updateSettings({ [key]: [...accounts, newAccount] } as Partial<AppSettings>);
     revalidatePath("/settings");
+    if (cookieError) return { error: cookieError };
     return { ok: true };
   }
 
@@ -331,6 +362,24 @@ export async function submitCheckpointCode(
   await updateSettings({ [key]: updated } as Partial<AppSettings>);
   revalidatePath("/settings");
   return { ok: true };
+}
+
+export async function testManagedAccountCookie(
+  platform: Platform,
+  id: string,
+): Promise<{ ok: boolean; message: string }> {
+  await requireUser();
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  const account = accounts.find((a) => a.id === id);
+  if (!account?.cookie) return { ok: false, message: "No cookie saved for this account" };
+
+  if (platform === "instagram") {
+    return testInstagramCookieString(account.cookie, account.label);
+  }
+
+  return { ok: false, message: "Test not supported for this platform" };
 }
 
 export async function setManagedAccountCookie(platform: Platform, id: string, cookie: string): Promise<{ ok?: true; error?: string }> {

@@ -124,6 +124,67 @@ export async function deleteSeed(id: string) {
 
 export type ScrapeProvider = "auto" | "playwright" | "cookie" | "apify" | "scrapingbee";
 
+export async function addSeedsBulk(usernames: string[]): Promise<{ added: number; skipped: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+  let added = 0;
+  let skipped = 0;
+  for (const raw of usernames) {
+    const username = toUsername(raw.trim());
+    if (!username) { skipped++; continue; }
+    const { error } = await sb.from("seeds").insert({ username, profile_url: profileUrl(username) });
+    if (error) { skipped++; continue; }
+    added++;
+  }
+  revalidatePath("/seeds");
+  return { added, skipped };
+}
+
+export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise<{ started: number; error?: string }> {
+  await requireUser();
+  const admin = createAdminClient();
+  const settings = await getSettings(true);
+
+  const { data: seeds } = await admin.from("seeds").select("id, username, max_profiles_to_scrape");
+  if (!seeds?.length) return { started: 0 };
+
+  // Skip seeds that already have a running or queued job
+  const { data: activeJobs } = await admin
+    .from("crawl_jobs")
+    .select("seed_id")
+    .in("status", ["running", "queued"]);
+  const activeSeedIds = new Set((activeJobs ?? []).map((j) => j.seed_id));
+
+  const provider = providerOverride ?? settings.following_scraper_provider;
+  let started = 0;
+
+  for (const seed of seeds) {
+    if (activeSeedIds.has(seed.id)) continue;
+    const { data: job, error: jobErr } = await admin
+      .from("crawl_jobs")
+      .insert({ seed_id: seed.id, status: "queued", max_depth: settings.max_crawl_depth })
+      .select("id")
+      .single();
+    if (jobErr || !job) continue;
+    const { ids } = await inngest.send({
+      name: "crawl/seed.requested",
+      data: {
+        crawl_job_id: job.id,
+        seed_id: seed.id,
+        seed_username: seed.username,
+        profile_limit: seed.max_profiles_to_scrape ?? null,
+        provider_override: providerOverride ?? null,
+      },
+    });
+    await admin.from("crawl_jobs").update({ inngest_run_id: ids[0] ?? null }).eq("id", job.id);
+    started++;
+  }
+
+  revalidatePath("/seeds");
+  revalidatePath("/");
+  return { started };
+}
+
 export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvider) {
   await requireUser();
   const admin = createAdminClient();

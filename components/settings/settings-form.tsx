@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { AlertTriangle } from "lucide-react";
 import { saveSettings, removeManagedAccount } from "@/app/actions/settings";
-import { BurnerCookieManager } from "@/components/settings/burner-cookie-manager";
 import { YtCookieManager } from "@/components/settings/yt-cookie-manager";
 import { ManagedAccountManager } from "@/components/settings/managed-account-manager";
 import { BodyEditor } from "@/components/settings/body-editor";
@@ -104,15 +103,9 @@ export function SettingsForm({
             <div className="space-y-2">
               <p className="text-sm font-medium">Instagram accounts</p>
               <p className="text-xs text-muted-foreground">
-                Add burner Instagram accounts. The system logs in automatically and keeps the cookie fresh — the scraper rotates between accounts when one gets rate-limited.
+                Add Instagram accounts with their session cookie. The scraper rotates between accounts automatically when one gets rate-limited.
               </p>
               <ManagedAccountManager key={igResetKey} platform="instagram" accounts={igAccounts} onPendingDelete={(id) => addPendingDelete("instagram", id)} />
-            </div>
-            <Separator />
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Instagram cookies (manual)</p>
-              <p className="text-xs text-muted-foreground">Or paste a cookie directly. Used as fallback if no managed accounts are set.</p>
-              <BurnerCookieManager cookies={initial.instagram_session_cookies ?? []} />
             </div>
             <Separator />
             <div className="space-y-2">

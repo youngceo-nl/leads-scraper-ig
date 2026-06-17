@@ -91,14 +91,11 @@ export async function fetchProfileMetadataDirect(opts: {
   const { username, sessionCookie, timeoutMs = 15_000 } = opts;
   if (opts.delayMs) await sleep(opts.delayMs);
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-  const headers: Record<string, string> = {
-    "User-Agent": randomUA(),
-    "X-IG-App-ID": "936619743392459",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": `https://www.instagram.com/${encodeURIComponent(username)}/`,
-  };
-  if (sessionCookie) headers["Cookie"] = sessionCookie;
+  const ua = randomUA();
+  const referer = `https://www.instagram.com/${encodeURIComponent(username)}/`;
+  const headers: Record<string, string> = sessionCookie
+    ? chromeHeaders(ua, sessionCookie, referer)
+    : { "User-Agent": ua, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9", "X-IG-App-ID": "936619743392459", "Referer": referer };
 
   let res: Response;
   try {
@@ -219,20 +216,62 @@ function jitter(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// Realistic User-Agent pool — rotated per-request to avoid fingerprinting on a
-// fixed UA string. Mix of browser and official IG app UAs.
+// Chrome-only UA pool — must stay consistent with web session cookies.
+// Android Instagram UAs paired with web cookies is an immediate detection signal.
 const USER_AGENTS = [
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+  // Chrome on macOS
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  // Chrome on Windows
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
-  "Instagram 291.0.0.29.111 Android (30/11; 480dpi; 1080x2137; samsung; SM-G973F; beyond1; exynos9820; en_US; 493494379)",
-  "Instagram 317.0.0.24.109 Android (33/13; 420dpi; 1080x2280; samsung; SM-S918B; dm3q; qcom; en_US; 562662939)",
-  "Instagram 289.0.0.77.109 Android (28/9; 560dpi; 1440x2960; samsung; SM-G965F; star2qltecs; qcom; en_US; 488165203)",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 ];
+
+// Extract the sec-ch-ua hint matching the chosen UA (Chrome version)
+function secChUa(ua: string): string {
+  const m = ua.match(/Chrome\/(\d+)/);
+  const v = m?.[1] ?? "124";
+  return `"Chromium";v="${v}", "Google Chrome";v="${v}", "Not-A.Brand";v="99"`;
+}
+
+function platform(ua: string): string {
+  return ua.includes("Windows") ? "Windows" : "macOS";
+}
 
 function randomUA(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+// Extract csrftoken from a cookie string so it can be sent as X-CSRFToken
+function extractCsrf(cookie: string): string | null {
+  const m = cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  return m?.[1] ?? null;
+}
+
+// Full set of headers a real Chrome browser sends to Instagram's API
+function chromeHeaders(ua: string, cookie: string, referer: string): Record<string, string> {
+  const csrf = extractCsrf(cookie);
+  return {
+    "User-Agent": ua,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "X-IG-App-ID": "936619743392459",
+    "X-ASBD-ID": "129477",
+    "X-IG-WWW-Claim": "0",
+    "X-Requested-With": "XMLHttpRequest",
+    ...(csrf ? { "X-CSRFToken": csrf } : {}),
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "sec-ch-ua": secChUa(ua),
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": `"${platform(ua)}"`,
+    "Origin": "https://www.instagram.com",
+    "Referer": referer,
+    "Cookie": cookie,
+  };
 }
 
 // =============================================================================
@@ -246,13 +285,6 @@ export async function fetchReelsDirect(opts: {
   limit?: number;
 }): Promise<RecentPost[]> {
   const { userId, sessionCookie, limit = 12 } = opts;
-  const headers: Record<string, string> = {
-    "User-Agent": randomUA(),
-    "X-IG-App-ID": "936619743392459",
-    "Accept": "*/*",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Cookie": sessionCookie,
-  };
 
   const out: RecentPost[] = [];
   let maxId: string | null = null;
@@ -261,6 +293,10 @@ export async function fetchReelsDirect(opts: {
 
   while (out.length < limit && pages < MAX_PAGES) {
     pages++;
+    const headers = {
+      ...chromeHeaders(randomUA(), sessionCookie, "https://www.instagram.com/reels/"),
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
     const params = new URLSearchParams();
     params.set("target_user_id", userId);
     params.set("page_size", String(Math.min(limit - out.length, 9)));
@@ -306,7 +342,6 @@ export async function fetchReelsDirect(opts: {
     maxId = json.paging_info?.max_id ?? null;
     if (!more || !maxId) break;
     await sleep(jitter(800, 2500));
-    headers["User-Agent"] = randomUA();
   }
 
   return out.slice(0, limit);
@@ -353,19 +388,12 @@ async function resolveUserIdDirect(opts: {
   await sleep(jitter(300, 900));
 
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(opts.username)}`;
-  const headers: Record<string, string> = {
-    "User-Agent": randomUA(),
-    "X-IG-App-ID": "936619743392459",
-    "Accept": "application/json",
-    "Referer": `https://www.instagram.com/${encodeURIComponent(opts.username)}/`,
-    "Cookie": opts.sessionCookie,
-  };
+  let headers = chromeHeaders(randomUA(), opts.sessionCookie, `https://www.instagram.com/${encodeURIComponent(opts.username)}/`);
   let res = await fetch(url, { headers });
 
-  // Retry with backoff on 429 (transient rate-limits often clear in ~30s)
   if (res.status === 429) {
     await sleep(jitter(BACKOFF_MIN_MS, BACKOFF_MAX_MS));
-    headers["User-Agent"] = randomUA();
+    headers = chromeHeaders(randomUA(), opts.sessionCookie, `https://www.instagram.com/${encodeURIComponent(opts.username)}/`);
     res = await fetch(url, { headers });
   }
 
@@ -391,14 +419,8 @@ export async function fetchFollowingDirect(opts: {
   const userId = await resolveUserIdDirect({ username: opts.username, sessionCookie: opts.sessionCookie });
   if (!userId) throw new InstagramDirectError(`Could not resolve user_id for @${opts.username}`, undefined, false);
 
-  const headers: Record<string, string> = {
-    "User-Agent": randomUA(),
-    "X-IG-App-ID": "936619743392459",
-    "Accept": "application/json",
-    "Accept-Language": "en-US",
-    "Referer": `https://www.instagram.com/${encodeURIComponent(opts.username)}/`,
-    "Cookie": opts.sessionCookie,
-  };
+  const referer = `https://www.instagram.com/${encodeURIComponent(opts.username)}/following/`;
+  let headers = chromeHeaders(randomUA(), opts.sessionCookie, referer);
 
   const out: DiscoveredFollowingDirect[] = [];
   const seen = new Set<string>();
@@ -407,12 +429,9 @@ export async function fetchFollowingDirect(opts: {
   let nextCursor: string | null = null;
 
   while (out.length < opts.limit) {
-    // Jittered inter-page delay: always sleep between pages so the Inngest
-    // per-page-step case also gets throttled (it only fetches one page per call
-    // so the old end-of-loop guard never fired for limit=50=PAGE_SIZE).
     if (pages > 0) await sleep(jitter(FOLLOWING_DELAY_MIN_MS, FOLLOWING_DELAY_MAX_MS));
-    // Rotate User-Agent each page — prevents fingerprinting on a fixed UA string
-    headers["User-Agent"] = randomUA();
+    // Rebuild headers each page: rotates UA + keeps all Sec-* headers consistent
+    headers = chromeHeaders(randomUA(), opts.sessionCookie, referer);
     pages++;
 
     const u = new URL(`https://www.instagram.com/api/v1/friendships/${userId}/following/`);

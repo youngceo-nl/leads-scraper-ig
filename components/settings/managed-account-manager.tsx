@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useRouter } from "next/navigation";
-import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, setManagedAccountCookie } from "@/app/actions/settings";
+import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie } from "@/app/actions/settings";
 import type { ManagedAccountDisplay } from "@/lib/types";
 
 function relativeTime(iso: string | null): string {
@@ -68,10 +68,8 @@ function AccountCard({
   const [submittingCode, setSubmittingCode] = useState(false);
   const [emailDraft, setEmailDraft] = useState(account.account_email ?? "");
   const [savingEmail, setSavingEmail] = useState(false);
-  const [cookieDraft, setCookieDraft] = useState("");
-  const [savingCookie, setSavingCookie] = useState(false);
-  const [cookieError, setCookieError] = useState<string | null>(null);
-  const [showPasteCookie, setShowPasteCookie] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
   const router = useRouter();
 
   const handleSaveEmail = async () => {
@@ -81,19 +79,12 @@ function AccountCard({
     router.refresh();
   };
 
-  const handlePasteCookie = async () => {
-    if (!cookieDraft.trim()) return;
-    setSavingCookie(true);
-    setCookieError(null);
-    const res = await setManagedAccountCookie(platform, account.id, cookieDraft.trim());
-    setSavingCookie(false);
-    if (res.error) {
-      setCookieError(res.error);
-    } else {
-      setCookieDraft("");
-      setShowPasteCookie(false);
-      window.location.reload();
-    }
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    const res = await testManagedAccountCookie(platform, account.id);
+    setTestResult(res);
+    setTesting(false);
   };
 
   const handleCodeSubmit = async () => {
@@ -137,12 +128,14 @@ function AccountCard({
             </>
           ) : (
             <>
-              <Button
-                type="button" size="icon" variant="ghost" disabled={refreshing}
-                onClick={onRefresh} aria-label="Refresh cookie" className="h-7 w-7"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-              </Button>
+              {platform === "instagram" && account.cookie && (
+                <Button
+                  type="button" size="sm" variant="ghost" disabled={testing}
+                  onClick={handleTest} className="h-7 px-2 text-xs"
+                >
+                  {testing ? "Testing…" : "Test"}
+                </Button>
+              )}
               <Button
                 type="button" size="icon" variant="ghost"
                 onClick={() => setConfirmDelete(true)} aria-label="Remove account" className="h-7 w-7"
@@ -153,6 +146,12 @@ function AccountCard({
           )}
         </div>
       </div>
+
+      {testResult && (
+        <div className={`px-3 py-1.5 text-xs border-t ${testResult.ok ? "text-green-600" : "text-destructive"}`}>
+          {testResult.message}
+        </div>
+      )}
 
       {/* Cookie row — collapsed by default */}
       <div className="border-t bg-muted/30 px-3 py-2">
@@ -180,51 +179,7 @@ function AccountCard({
           </div>
         )}
 
-        {/* Paste cookie manually — bypasses login/CAPTCHA entirely */}
-        {platform === "instagram" && (
-          <div className="mt-2">
-            {showPasteCookie ? (
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">
-                  Log into Instagram as{" "}
-                  <span className="font-medium text-foreground">@{account.label}</span>
-                  {account.account_email && (
-                    <> ({account.account_email})</>
-                  )}{" "}
-                  in Chrome, then: <kbd className="text-xs bg-muted px-1 rounded">F12</kbd> → Application → Cookies → instagram.com → copy the <code className="text-xs">sessionid</code> value
-                </p>
-                <div className="flex gap-2">
-                  <Input
-                    value={cookieDraft}
-                    onChange={(e) => setCookieDraft(e.target.value)}
-                    placeholder="Paste sessionid or full cookie string…"
-                    className="h-7 text-xs flex-1 font-mono"
-                    onKeyDown={(e) => e.key === "Enter" && !savingCookie && handlePasteCookie()}
-                  />
-                  <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-xs"
-                    disabled={savingCookie || !cookieDraft.trim()} onClick={handlePasteCookie}>
-                    {savingCookie ? "Saving…" : "Save"}
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
-                    onClick={() => { setShowPasteCookie(false); setCookieDraft(""); setCookieError(null); }}>
-                    Cancel
-                  </Button>
-                </div>
-                {cookieError && <p className="text-xs text-destructive">{cookieError}</p>}
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowPasteCookie(true)}
-                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-              >
-                Paste cookie from browser
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Inline email field — always visible so user can set it without re-adding the account */}
+{/* Inline email field — always visible so user can set it without re-adding the account */}
         {platform === "instagram" && (
           <div className="flex items-center gap-2 mt-2">
             <Input
@@ -333,9 +288,7 @@ export function ManagedAccountManager({
   const [label, setLabel] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [cookiePaste, setCookiePaste] = useState("");
-  const [showAutoLogin, setShowAutoLogin] = useState(false);
   const [password, setPassword] = useState("");
-  const [totpSecret, setTotpSecret] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [addPending, startAdd] = useTransition();
   const [addResult, setAddResult] = useState<{ ok?: true; error?: string } | null>(null);
@@ -368,19 +321,19 @@ export function ManagedAccountManager({
 
   const handleAdd = () => {
     if (!label.trim()) return;
-    if (!cookiePaste.trim() && !password.trim()) return;
+    if (isIg && !cookiePaste.trim()) return;
+    if (!isIg && !password.trim()) return;
     setAddResult(null);
     startAdd(async () => {
       const res = await addManagedAccount(platform, {
         label: label.trim(),
         account_email: accountEmail.trim() || undefined,
-        cookie: cookiePaste.trim() || undefined,
-        password: password.trim() || undefined,
-        totp_secret: totpSecret.trim() || undefined,
+        cookie: isIg ? cookiePaste.trim() : undefined,
+        password: !isIg ? password.trim() : undefined,
       });
       setAddResult(res ?? { ok: true });
       if (res.ok) {
-        setLabel(""); setAccountEmail(""); setCookiePaste(""); setPassword(""); setTotpSecret("");
+        setLabel(""); setAccountEmail(""); setCookiePaste(""); setPassword("");
         window.location.reload();
       }
     });
@@ -457,57 +410,7 @@ export function ManagedAccountManager({
           </div>
         )}
 
-        {/* Auto-login toggle (advanced) */}
-        {isIg && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowAutoLogin((v) => !v)}
-              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-            >
-              {showAutoLogin ? "Hide auto-login" : "Use password instead (auto-login)"}
-            </button>
-            {showAutoLogin && (
-              <div className="mt-2 space-y-2">
-                <div className="space-y-1">
-                  <Label htmlFor={`${platform}-pw`} className="text-xs">Password</Label>
-                  <div className="relative">
-                    <Input
-                      id={`${platform}-pw`}
-                      type={showPw ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      autoComplete="new-password"
-                      className="h-8 text-sm pr-8"
-                    />
-                    <button type="button" tabIndex={-1} onClick={() => setShowPw((v) => !v)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                      {showPw ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor={`${platform}-totp`} className="text-xs">
-                    Authenticator secret{" "}
-                    <span className="text-muted-foreground font-normal">(optional — only if 2FA enabled)</span>
-                  </Label>
-                  <Input
-                    id={`${platform}-totp`}
-                    type="password"
-                    value={totpSecret}
-                    onChange={(e) => setTotpSecret(e.target.value)}
-                    placeholder="Base32 secret (JBSWY3DP…)"
-                    autoComplete="off"
-                    className="h-8 text-sm"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* YouTube: keep original password form */}
+{/* YouTube: keep original password form */}
         {!isIg && (
           <div className="space-y-1">
             <Label htmlFor={`${platform}-pw`} className="text-xs">Password</Label>
@@ -534,7 +437,7 @@ export function ManagedAccountManager({
             type="button"
             size="sm"
             variant="secondary"
-            disabled={addPending || !label.trim() || (!cookiePaste.trim() && !password.trim())}
+            disabled={addPending || !label.trim() || (isIg ? !cookiePaste.trim() : !password.trim())}
             onClick={handleAdd}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${addPending ? "animate-spin" : ""}`} />

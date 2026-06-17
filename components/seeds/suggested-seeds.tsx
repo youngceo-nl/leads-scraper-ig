@@ -1,8 +1,8 @@
 "use client";
 import { useState, useTransition } from "react";
-import { Plus, Check, ExternalLink } from "lucide-react";
+import { Plus, Check, ExternalLink, ChevronsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { addSeed } from "@/app/actions/seeds";
+import { addSeed, addSeedsBulk } from "@/app/actions/seeds";
 
 type SuggestedSeed = {
   username: string;
@@ -21,6 +21,16 @@ function fmt(n: number): string {
 export function SuggestedSeeds({ candidates }: { candidates: SuggestedSeed[] }) {
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [pending, start] = useTransition();
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+
+  const handleAddAll = () => {
+    start(async () => {
+      const remaining = candidates.filter((c) => !added.has(c.username)).map((c) => c.username);
+      const res = await addSeedsBulk(remaining);
+      setAdded((prev) => new Set([...prev, ...remaining]));
+      setBulkMsg(`Added ${res.added} seeds${res.skipped ? `, skipped ${res.skipped}` : ""}.`);
+    });
+  };
 
   if (candidates.length === 0) {
     return (
@@ -39,7 +49,20 @@ export function SuggestedSeeds({ candidates }: { candidates: SuggestedSeed[] }) 
     });
   };
 
+  const allAdded = candidates.every((c) => added.has(c.username));
+
   return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">{candidates.length} accounts</p>
+        <div className="flex items-center gap-2">
+          {bulkMsg && <span className="text-xs text-muted-foreground">{bulkMsg}</span>}
+          <Button size="sm" variant="secondary" disabled={pending || allAdded} onClick={handleAddAll}>
+            <ChevronsUp className="h-3.5 w-3.5 mr-1.5" />
+            {allAdded ? "All added" : `Add all ${candidates.length}`}
+          </Button>
+        </div>
+      </div>
     <div className="rounded-md border divide-y">
       {candidates.map((c) => {
         const isAdded = added.has(c.username);
@@ -80,6 +103,7 @@ export function SuggestedSeeds({ candidates }: { candidates: SuggestedSeed[] }) 
           </div>
         );
       })}
+    </div>
     </div>
   );
 }

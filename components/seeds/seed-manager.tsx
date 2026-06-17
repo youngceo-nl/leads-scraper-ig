@@ -1,9 +1,9 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
-import { Trash2, Play, Check, AlertCircle } from "lucide-react";
+import { Trash2, Play, Check, AlertCircle, ChevronsRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addSeed, deleteSeed, startCrawl, updateSeedLimit, type ScrapeProvider } from "@/app/actions/seeds";
+import { addSeed, deleteSeed, startCrawl, startAllCrawls, updateSeedLimit, type ScrapeProvider } from "@/app/actions/seeds";
 import type { Seed } from "@/lib/types";
 
 function friendlyCookieError(msg: string) {
@@ -38,6 +38,8 @@ export function SeedManager({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [bulkProvider, setBulkProvider] = useState<ScrapeProvider>("cookie");
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
   const latestBySeed = useMemo(() => {
     const m = new Map<string, LatestJob>();
@@ -75,6 +77,35 @@ export function SeedManager({
       </form>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {info && <p className="text-sm text-muted-foreground">{info}</p>}
+
+      {seeds.length > 0 && (
+        <div className="flex items-center gap-2">
+          <select
+            value={bulkProvider}
+            onChange={(e) => setBulkProvider(e.target.value as ScrapeProvider)}
+            className="h-8 rounded-md border border-input bg-transparent px-2 text-xs shadow-sm"
+          >
+            {PROVIDER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const res = await startAllCrawls(bulkProvider);
+                setBulkMsg(`Started ${res.started} crawl${res.started !== 1 ? "s" : ""}.`);
+              })
+            }
+          >
+            <ChevronsRight className="h-3.5 w-3.5 mr-1.5" />
+            Crawl all
+          </Button>
+          {bulkMsg && <span className="text-xs text-muted-foreground">{bulkMsg}</span>}
+        </div>
+      )}
 
       <div className="rounded-md border divide-y">
         {seeds.length === 0 && <p className="p-4 text-sm text-muted-foreground">No source accounts yet. Add one above to get started.</p>}
