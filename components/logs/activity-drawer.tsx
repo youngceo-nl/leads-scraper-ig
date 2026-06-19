@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { ScrollText, X, AlertTriangle, CheckCircle2, Clock, LayoutDashboard, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { actionLabel, actionIsPositive } from "@/lib/labels";
-import { getPendingCount, getRescoreProgress, getBackfillProgress } from "@/app/actions/leads";
+import { getPendingCount, getRescoreProgress, getBackfillProgress, cancelBackfill } from "@/app/actions/leads";
 import { cancelCrawl, getCrawlJobProgress, getActiveJobs, type ActiveJob } from "@/app/actions/crawl-jobs";
 
 type CrawlLog = {
@@ -48,6 +49,8 @@ export function ActivityDrawerButton() {
       if (saved) setBulkJob(JSON.parse(saved) as BulkJob);
     } catch { /* ignore */ }
   }, []);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const drawerRef = useRef<HTMLDivElement>(null);
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -191,12 +194,13 @@ export function ActivityDrawerButton() {
         )}
       </button>
 
-      {open && <div className="fixed inset-0 z-40 bg-black/20" aria-hidden="true" />}
-
-      <div
-        ref={drawerRef}
-        className={`fixed top-0 right-0 h-full w-[420px] bg-background border-l shadow-xl z-50 flex flex-col transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
-      >
+      {mounted && createPortal(
+        <>
+          {open && <div className="fixed inset-0 z-[99] bg-black/20" aria-hidden="true" onClick={() => setOpen(false)} />}
+          <div
+            ref={drawerRef}
+            className={`fixed top-0 right-0 h-full w-[420px] bg-background border-l shadow-xl z-[100] flex flex-col transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
+          >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
           <div className="flex items-center gap-2">
@@ -315,7 +319,10 @@ export function ActivityDrawerButton() {
             )
           )}
         </div>
-      </div>
+          </div>
+        </>,
+        document.body
+      )}
     </>
   );
 }
@@ -323,6 +330,14 @@ export function ActivityDrawerButton() {
 function ActiveJobRow({ job }: { job: ActiveJob }) {
   const isPlaywright = job.type === "crawl" && job.scraped === 0 && job.status === "running";
   const pct = job.total > 0 ? Math.min(100, Math.round((job.scraped / job.total) * 100)) : null;
+  const [stopping, setStopping] = useState(false);
+
+  const handleStop = async () => {
+    setStopping(true);
+    if (job.type === "crawl") await cancelCrawl(job.id);
+    else if (job.type === "backfill") await cancelBackfill();
+    setStopping(false);
+  };
 
   return (
     <div className="px-4 py-3 bg-blue-50/50 dark:bg-blue-950/30 space-y-1.5">
@@ -334,6 +349,14 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
             {job.scraped} / {job.total}
           </span>
         )}
+        <button
+          onClick={handleStop}
+          disabled={stopping}
+          className="text-muted-foreground hover:text-destructive transition-colors ml-1 disabled:opacity-40"
+          title="Stop"
+        >
+          {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+        </button>
       </div>
       {isPlaywright ? (
         <p className="text-[11px] text-muted-foreground pl-5">
@@ -364,11 +387,12 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
     : etaMin < 60 ? `~${Math.round(etaMin)} min`
     : `~${Math.round(etaMin / 60)}h`;
 
-  const [cancelling, setCancelling] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
-  const handleCancel = async () => {
-    setCancelling(true);
-    if (job.crawl_job_id) await cancelCrawl(job.crawl_job_id);
+  const handleStop = async () => {
+    setStopping(true);
+    if (job.type === "backfill") await cancelBackfill();
+    else if (job.crawl_job_id) await cancelCrawl(job.crawl_job_id);
     onCancel();
   };
 
@@ -379,12 +403,12 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground tabular-nums">{job.done} / {job.total}</span>
           <button
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-            title="Cancel"
+            onClick={handleStop}
+            disabled={stopping}
+            className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40"
+            title="Stop"
           >
-            <X className="h-3.5 w-3.5" />
+            {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

@@ -13,6 +13,46 @@ export type BrowserFetchResult = {
   body: string;
 };
 
+// Chrome-only UAs — must stay consistent with web session cookies.
+const USER_AGENTS = [
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+];
+
+// Common desktop resolutions — avoids the telltale Chromium default 1280×720
+const VIEWPORTS = [
+  { width: 1920, height: 1080 },
+  { width: 1440, height: 900 },
+  { width: 1536, height: 864 },
+  { width: 1366, height: 768 },
+  { width: 1280, height: 800 },
+];
+
+export function randomUA(): string {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+function randomViewport() {
+  return VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)];
+}
+
+function parseProxyUrl(url: string): { server: string; username?: string; password?: string } | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    const proxy: { server: string; username?: string; password?: string } = { server: `${u.protocol}//${u.host}` };
+    if (u.username) proxy.username = decodeURIComponent(u.username);
+    if (u.password) proxy.password = decodeURIComponent(u.password);
+    return proxy;
+  } catch {
+    return { server: url };
+  }
+}
+
 // Parse a "name=value; name2=value2" cookie string into Playwright cookie objects.
 function parseCookies(cookieStr: string, domain = ".instagram.com") {
   return cookieStr
@@ -47,13 +87,14 @@ export async function browserFetch(
   const { chromium } = await import("playwright");
 
   const launchOpts: Parameters<typeof chromium.launch>[0] = { headless: true };
-  if (opts.proxyUrl) launchOpts.proxy = { server: opts.proxyUrl };
+  if (opts.proxyUrl) launchOpts.proxy = parseProxyUrl(opts.proxyUrl);
 
   const browser = await chromium.launch(launchOpts);
   try {
     const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      userAgent: randomUA(),
+      viewport: randomViewport(),
+      locale: "en-US",
     });
     await context.addCookies(parseCookies(opts.cookie));
 
@@ -83,15 +124,14 @@ export class BrowserSession {
     const { chromium } = await import("playwright");
     this.browser = await chromium.launch({
       headless: true,
-      ...(proxyUrl ? { proxy: { server: proxyUrl } } : {}),
+      ...(proxyUrl ? { proxy: parseProxyUrl(proxyUrl) } : {}),
     });
     const context = await this.browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      userAgent: randomUA(),
+      viewport: randomViewport(),
+      locale: "en-US",
     });
-    await context.addCookies([
-      ...parseCookies(cookie),
-    ]);
+    await context.addCookies(parseCookies(cookie));
     this.page = await context.newPage();
   }
 

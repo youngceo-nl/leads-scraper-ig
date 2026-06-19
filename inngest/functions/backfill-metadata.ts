@@ -2,8 +2,7 @@ import { inngest } from "@/inngest/client";
 import { getSettings, resolveApifyTokens } from "@/lib/config/settings";
 import { scrapeProfiles } from "@/lib/apify/actors";
 import { fetchProfileMetadataDirect, InstagramDirectError, sleep } from "@/lib/instagram/direct";
-import { BrowserSession } from "@/lib/instagram/browser-fetch";
-import { buildCookiePool, pickCookie, markRateLimited } from "@/lib/instagram/cookie-pool";
+import { buildCookiePool, buildProxyPool, pickCookie, markRateLimited } from "@/lib/instagram/cookie-pool";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logCrawl, logError } from "@/lib/pipeline/persist";
 
@@ -20,29 +19,15 @@ import { logCrawl, logError } from "@/lib/pipeline/persist";
 // Path is chosen at runtime by checking `settings.instagram_session_cookie`.
 
 const APIFY_BATCH = 100;
-const COOKIE_BATCH = 100;
-// Base 1.0s between profiles, jittered to look human (700–1800ms range, mean
-// ~1.25s). Every ~15 requests we inject a longer "thinking pause" (2–5s) to
-// mimic someone scrolling and reading. Bot-detection on IG looks at
-// inter-request variance + occasional natural pauses; constant intervals are
-// the cheapest red flag.
-const COOKIE_DELAY_BASE_MS = 1000;
+const COOKIE_BATCH = 50;
+// 300ms base with ±50% jitter → mean ~300ms, ~200 profiles/min per event.
+// The web_profile_info endpoint is lightweight; no need for human-pace simulation.
+const COOKIE_DELAY_BASE_MS = 300;
 
 function jitteredDelay(base: number): number {
-  // Uniform 0.7x → 1.8x of base. Mean lifts to ~1.25x so global throughput
-  // stays well under 1 req/s on average.
-  const min = base * 0.7;
-  const max = base * 1.8;
+  const min = base * 0.5;
+  const max = base * 1.5;
   return Math.floor(min + Math.random() * (max - min));
-}
-
-function maybeLongPause(): number {
-  // 6% chance per request → roughly one "I'm reading a post" pause per 15-20
-  // requests. 2–5s, uniform.
-  if (Math.random() < 0.06) {
-    return Math.floor(2000 + Math.random() * 3000);
-  }
-  return 0;
 }
 
 
@@ -51,16 +36,14 @@ export const backfillMetadata = inngest.createFunction(
     id: "backfill-metadata",
     name: "Backfill follower counts / metadata",
     retries: 2,
-    concurrency: [
-      { limit: 1, key: "event.data.crawl_job_id" }, // 1 backfill per crawl (cookie path = sequential anyway)
-      { limit: 3 },
-    ],
+    concurrency: { limit: 3 },
   },
   { event: "leads/backfill.metadata.requested" },
   async ({ event, step }) => {
-    const { usernames, crawl_job_id } = event.data as {
+    const { usernames, crawl_job_id, event_index = 0 } = event.data as {
       usernames: string[];
       crawl_job_id?: string | null;
+      event_index?: number;
     };
     if (!usernames || usernames.length === 0) return { processed: 0 };
 
@@ -99,25 +82,53 @@ export const backfillMetadata = inngest.createFunction(
         if (halt) break;
         const batch = batches[bi];
         const result = await step.run(`cookie-batch-${bi}`, async () => {
-          // Pick a fresh cookie each batch — rotates through the pool.
-          const activeEntry = pickCookie(buildCookiePool(settings));
-          if (!activeEntry) return { s: 0, u: 0, updatedLeadIds: [], halt: true };
-          const { cookie: activeCookie, proxyUrl: activeProxy } = activeEntry;
-          // One Chrome instance for the whole batch — pays startup cost once.
-          const session = new BrowserSession();
-          await session.init(activeCookie, activeProxy);
+          // Check for user-requested cancellation before starting this batch.
+          const fresh = await getSettings(true);
           const sb = createAdminClient();
+          if (fresh.backfill_cancel_requested) {
+            await sb.from("app_settings").update({ backfill_cancel_requested: false, backfill_started_at: null }).eq("id", 1);
+            return { s: 0, u: 0, updatedLeadIds: [], halt: true, cancelled: true };
+          }
+          // Clear the "starting up" timestamp once processing actually begins.
+          if (bi === 0) {
+            await sb.from("app_settings").update({ backfill_started_at: null }).eq("id", 1);
+          }
+
+          // Deterministic selection using batch index — cookies and proxies rotate
+          // independently so a dead proxy on one account doesn't strand its cookie.
+          // We can't use module-level state (rrIndex) because Inngest replays the
+          // function from scratch for each step, resetting in-process variables.
+          const cookiePool = buildCookiePool(settings).filter((e) => !!e.cookie);
+          if (cookiePool.length === 0) return { s: 0, u: 0, updatedLeadIds: [], halt: true };
+          const proxyPool = buildProxyPool(settings);
+          const slot = bi + event_index;
+          const activeEntry = cookiePool[slot % cookiePool.length];
+          const { cookie: activeCookie, accountUsername: activeAccount } = activeEntry;
+          // Pick proxy from the shared pool; fall back to the account's own proxy if pool is empty.
+          const activeProxy = proxyPool.length > 0
+            ? proxyPool[slot % proxyPool.length]
+            : activeEntry.proxyUrl;
           const updatedLeadIds: string[] = [];
           let s = 0, u = 0;
-          try {
-            for (const username of batch) {
+          let cancelledMid = false;
+          for (const username of batch) {
+              // Check stop flag every profile — cheap read, avoids 15s lag before honoring stop.
+              const check = await sb.from("app_settings").select("backfill_cancel_requested").eq("id", 1).single();
+              if (check.data?.backfill_cancel_requested) {
+                await sb.from("app_settings").update({ backfill_cancel_requested: false, backfill_started_at: null }).eq("id", 1);
+                cancelledMid = true;
+                break;
+              }
               try {
-                const p = await fetchProfileMetadataDirect({ username, sessionCookie: activeCookie, session, proxyUrl: activeProxy });
+                // session: null → use Node.js fetch + undici ProxyAgent (no Playwright).
+                // Playwright's APIRequestContext doesn't reliably route through the launch-time
+                // proxy, causing persistent 407s. undici handles http://user:pass@host:port natively.
+                const p = await fetchProfileMetadataDirect({ username, sessionCookie: activeCookie, session: null, proxyUrl: activeProxy });
                 if (!p) {
                   // No data returned — account is private, deleted, or the API returned nothing.
                   // Mark it blocked so it drains out of the "remaining" queue instead of staying stuck.
                   await sb.from("leads").update({ backfill_error: "blocked" }).eq("username", username).is("followers", null);
-                  await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS) + maybeLongPause());
+                  await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS));
                   continue;
                 }
                 s++;
@@ -139,32 +150,32 @@ export const backfillMetadata = inngest.createFunction(
                   .single();
                 if (!error && data?.id) {
                   u++;
-                  updatedLeadIds.push(data.id);
+                  updatedLeadIds.push(data.id as string);
                 }
               } catch (err) {
                 const direct = err instanceof InstagramDirectError ? err : null;
                 const msg = direct ? direct.message : (err as Error).message;
                 await logError({
                   context: "backfill.metadata.cookie",
-                  error_message: msg,
-                  payload: { username, batch_index: bi, status: direct?.status },
+                  error_message: `Fetching @${username} via @${activeAccount ?? "unknown"}: ${msg}`,
+                  payload: { username, account: activeAccount, batch_index: bi, status: direct?.status },
                   crawl_job_id: crawl_job_id ?? null,
                 });
-                if (direct?.status === 429) markRateLimited(activeCookie);
-                if (direct && !direct.retryable) {
-                  return { s, u, updatedLeadIds, halt: true };
+                // Any account-level failure: break this batch so the next batch
+                // tries a different account via bi % pool rotation. Never halt the
+                // whole backfill — other accounts may still be healthy.
+                if (direct && (!direct.retryable || direct.status === 429)) {
+                  if (direct.status === 429) markRateLimited(activeCookie);
+                  break;
                 }
               }
-              await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS) + maybeLongPause());
-            }
-          } finally {
-            await session.close();
+              await sleep(jitteredDelay(COOKIE_DELAY_BASE_MS));
           }
-          return { s, u, updatedLeadIds, halt: false };
+          return { s, u, updatedLeadIds, halt: cancelledMid };
         });
         scraped += result.s;
         updated += result.u;
-        allUpdatedLeadIds.push(...result.updatedLeadIds);
+        allUpdatedLeadIds.push(...(result.updatedLeadIds as string[]));
         halt = result.halt;
       }
 

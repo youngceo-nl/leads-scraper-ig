@@ -39,7 +39,9 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
   await requireUser();
   const sb = createAdminClient();
 
-  const [{ data: crawlJobs }, { count: backfillRemaining }, { count: recentUpdates }] = await Promise.all([
+  const TEN_MIN = new Date(Date.now() - 10 * 60_000).toISOString();
+
+  const [{ data: crawlJobs }, { count: backfillRemaining }, { count: recentUpdates }, { data: settingsRow }] = await Promise.all([
     sb.from("crawl_jobs")
       .select("id, status, profiles_scraped, expected_profiles, started_at, seeds(username)")
       .in("status", ["queued", "running"])
@@ -53,7 +55,8 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
     sb.from("leads")
       .select("*", { count: "exact", head: true })
       .not("followers", "is", null)
-      .gte("updated_at", new Date(Date.now() - 45_000).toISOString()),
+      .gte("updated_at", new Date(Date.now() - 90_000).toISOString()),
+    sb.from("app_settings").select("backfill_started_at").eq("id", 1).single(),
   ]);
 
   const jobs: ActiveJob[] = [];
@@ -76,12 +79,17 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
     });
   }
 
-  const backfillActive = (recentUpdates ?? 0) > 0 && (backfillRemaining ?? 0) > 0;
+  const startedAt = (settingsRow as { backfill_started_at?: string | null } | null)?.backfill_started_at ?? null;
+  const startingUp = !!startedAt && startedAt >= TEN_MIN && (backfillRemaining ?? 0) > 0;
+  const backfillActive = ((recentUpdates ?? 0) > 0 || startingUp) && (backfillRemaining ?? 0) > 0;
+
   if (backfillActive) {
     jobs.push({
       id: "backfill",
       type: "backfill",
-      label: "Backfilling metadata",
+      label: startingUp && (recentUpdates ?? 0) === 0
+        ? "Backfilling metadata — starting up…"
+        : "Backfilling metadata",
       status: "running",
       scraped: 0,
       total: backfillRemaining ?? 0,

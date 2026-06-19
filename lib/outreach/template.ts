@@ -6,13 +6,13 @@ import type { Lead } from "@/lib/types";
 //   {{name|fallback}} — optional fallback value
 export type TemplateContext = Record<string, string | number | null | undefined>;
 
-// Matches {{key|fallback}} or {key} (single or double braces, spaces in key allowed)
-const TOKEN = /\{\{?\s*([a-zA-Z0-9_ ]+?)(?:\s*\|\s*([^}]*?))?\s*\}?\}/g;
+// Matches {{key|fallback}} or {key} (single or double braces, spaces/hyphens in key allowed)
+const TOKEN = /\{\{?\s*([a-zA-Z0-9_ -]+?)(?:\s*\|\s*([^}]*?))?\s*\}?\}/g;
 
 export function renderTemplate(tpl: string, ctx: TemplateContext): string {
   return tpl.replace(TOKEN, (_match, rawKey: string, fallback?: string) => {
-    // Normalize spaces → underscores so "{program name}" hits "program_name"
-    const key = rawKey.trim().replace(/\s+/g, "_");
+    // Normalize spaces and hyphens → underscores so "{first-name}" and "{program name}" both work
+    const key = rawKey.trim().replace(/[\s-]+/g, "_");
     const v = ctx[key];
     if (v == null || v === "") return (fallback ?? "").trim();
     return String(v);

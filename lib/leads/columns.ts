@@ -42,7 +42,7 @@ export const LEAD_COLUMNS: LeadColumn[] = [
   { key: "analyze",    label: "Analyze",     defaultVisible: false, hideable: true },
   { key: "source",     label: "Source",      defaultVisible: false, hideable: true },
   { key: "level",      label: "Level",       defaultVisible: false, hideable: true },
-  { key: "offer",      label: "Offer",       defaultVisible: false, hideable: true },
+  { key: "offer",      label: "Offer",       defaultVisible: true,  hideable: true },
   { key: "youtube",    label: "YouTube",     defaultVisible: true,  hideable: true },
   { key: "linkedin",   label: "LinkedIn",    defaultVisible: true,  hideable: true },
   { key: "email",      label: "Email",       defaultVisible: true,  hideable: true },

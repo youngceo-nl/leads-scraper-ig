@@ -1,10 +1,11 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, RefreshCw, Loader2, AlertCircle } from "lucide-react";
-import { enrichFunnel } from "@/app/actions/funnel";
+import { Input } from "@/components/ui/input";
+import { ExternalLink, RefreshCw, Loader2, AlertCircle, Pencil, Check, X } from "lucide-react";
+import { enrichFunnel, saveProgramName } from "@/app/actions/funnel";
 import { formatDistanceToNow } from "date-fns";
 
 type Initial = {
@@ -20,8 +21,12 @@ type Initial = {
 
 export function FunnelCard({ leadId, initial }: { leadId: string; initial: Initial }) {
   const [pending, start] = useTransition();
+  const [savePending, startSave] = useTransition();
   const [data, setData] = useState(initial);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const onClick = () => {
     setError(null);
@@ -44,6 +49,26 @@ export function FunnelCard({ leadId, initial }: { leadId: string; initial: Initi
     });
   };
 
+  const startEdit = () => {
+    setDraft(data.funnel_program_name ?? "");
+    setEditing(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const cancelEdit = () => setEditing(false);
+
+  const commitEdit = () => {
+    startSave(async () => {
+      const r = await saveProgramName(leadId, draft);
+      if (r.ok) {
+        setData((d) => ({ ...d, funnel_program_name: draft.trim() || null }));
+        setEditing(false);
+      } else {
+        setError(r.error ?? "save failed");
+      }
+    });
+  };
+
   const hasFunnel = !!(data.funnel_program_name || data.funnel_url);
   const noLink = !initial.external_link;
 
@@ -51,31 +76,71 @@ export function FunnelCard({ leadId, initial }: { leadId: string; initial: Initi
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Offer</CardTitle>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onClick}
-          disabled={pending || noLink}
-          title={noLink ? "This account has no link in their bio" : "Look up the offer behind their bio link"}
-        >
-          {pending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-          {hasFunnel ? "Refresh" : "Find offer"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={startEdit}
+            title="Enter program name manually"
+          >
+            <Pencil className="h-3.5 w-3.5 mr-1" />
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onClick}
+            disabled={pending || noLink}
+            title={noLink ? "This account has no link in their bio" : "Look up the offer behind their bio link"}
+          >
+            {pending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            {hasFunnel ? "Refresh" : "Find offer"}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {noLink && <p className="text-muted-foreground">No link in this account&apos;s bio — nothing to look up.</p>}
+        {noLink && !editing && <p className="text-muted-foreground">No link in this account&apos;s bio — nothing to look up.</p>}
 
-        {!noLink && !hasFunnel && !data.funnel_extraction_error && (
-          <p className="text-muted-foreground">Not looked up yet.</p>
-        )}
-
-        {data.funnel_program_name && (
-          <div>
-            <div className="font-medium text-base">{data.funnel_program_name}</div>
-            {data.funnel_offer_summary && (
-              <p className="text-muted-foreground mt-1">{data.funnel_offer_summary}</p>
-            )}
+        {editing ? (
+          <div className="flex items-center gap-2">
+            <Input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitEdit();
+                if (e.key === "Escape") cancelEdit();
+              }}
+              placeholder="e.g. 6-Week Coaching Program"
+              className="h-8 text-sm"
+            />
+            <Button size="sm" variant="ghost" onClick={commitEdit} disabled={savePending} title="Save">
+              {savePending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 text-green-600" />}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelEdit} title="Cancel">
+              <X className="h-3.5 w-3.5" />
+            </Button>
           </div>
+        ) : (
+          <>
+            {!hasFunnel && !data.funnel_extraction_error && (
+              <p className="text-muted-foreground">
+                Not looked up yet.{" "}
+                <button type="button" className="underline hover:text-foreground" onClick={startEdit}>
+                  Enter manually
+                </button>
+              </p>
+            )}
+
+            {data.funnel_program_name && (
+              <div>
+                <div className="font-medium text-base">{data.funnel_program_name}</div>
+                {data.funnel_offer_summary && (
+                  <p className="text-muted-foreground mt-1">{data.funnel_offer_summary}</p>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         <div className="flex items-center flex-wrap gap-2">

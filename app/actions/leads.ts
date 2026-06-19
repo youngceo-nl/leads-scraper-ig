@@ -423,15 +423,18 @@ export async function triggerBulkBackfill(): Promise<{ ok: boolean; queued: numb
   // Split into ≤3 chunks so Inngest can run them concurrently (concurrency limit: 3).
   const PARALLEL = 3;
   const chunkSize = Math.ceil(usernames.length / PARALLEL);
-  const events: { name: "leads/backfill.metadata.requested"; data: { usernames: string[]; crawl_job_id: null } }[] = [];
+  const events: { name: "leads/backfill.metadata.requested"; data: { usernames: string[]; crawl_job_id: null; event_index: number } }[] = [];
   for (let i = 0; i < usernames.length; i += chunkSize) {
     events.push({
       name: "leads/backfill.metadata.requested",
-      data: { usernames: usernames.slice(i, i + chunkSize), crawl_job_id: null },
+      data: { usernames: usernames.slice(i, i + chunkSize), crawl_job_id: null, event_index: events.length },
     });
   }
 
-  await inngest.send(events);
+  await Promise.all([
+    inngest.send(events),
+    sb.from("app_settings").update({ backfill_started_at: new Date().toISOString() }).eq("id", 1),
+  ]);
   return { ok: true, queued: usernames.length, events: events.length };
 }
 
@@ -489,6 +492,12 @@ export async function resetBlocked(): Promise<{ ok: boolean; reset: number }> {
   return { ok: true, reset: data?.length ?? 0 };
 }
 
+export async function cancelBackfill(): Promise<void> {
+  await requireUser();
+  const sb = createAdminClient();
+  await sb.from("app_settings").update({ backfill_cancel_requested: true }).eq("id", 1);
+}
+
 export type OperationStatus = {
   isRunning: boolean;
   operation: "backfill" | "analyze" | "crawl" | null;
@@ -505,23 +514,19 @@ export async function getOperationStatus(): Promise<OperationStatus> {
   const sb = createAdminClient();
   const ONE_HOUR = new Date(Date.now() - 60 * 60_000).toISOString();
   const NINETY_SEC = new Date(Date.now() - 90_000).toISOString();
+  const TEN_MIN = new Date(Date.now() - 10 * 60_000).toISOString();
   const FIVE_MIN = new Date(Date.now() - 5 * 60_000).toISOString();
 
   const [
     { data: methodLog },
-    // Leads that got followers filled in the last hour = succeeded this session
     { count: succeededCount },
-    // Leads definitively failed (blocked/private) in the last hour
     { count: blockedCount },
-    // Leads still needing backfill
     { count: remainingCount },
-    // Any lead filled in last 90s → backfill is live
     { count: recentUpdates },
-    // Pending leads with metadata (for analyze detection)
     { count: pendingCount },
     { count: recentPendingUpdates },
-    // For perMin calculation
     { count: recentFiveMin },
+    { data: settingsRow },
   ] = await Promise.all([
     sb.from("crawl_logs")
       .select("detail")
@@ -559,16 +564,18 @@ export async function getOperationStatus(): Promise<OperationStatus> {
       .select("*", { count: "exact", head: true })
       .not("followers", "is", null)
       .gte("updated_at", FIVE_MIN),
+    sb.from("app_settings").select("backfill_started_at").eq("id", 1).single(),
   ]);
 
-  const backfillRunning = (recentUpdates ?? 0) > 0 && (remainingCount ?? 0) > 0;
+  const startedAt = (settingsRow as { backfill_started_at?: string | null } | null)?.backfill_started_at ?? null;
+  const startingUp = !!startedAt && startedAt >= TEN_MIN && (remainingCount ?? 0) > 0;
+
+  const backfillRunning = ((recentUpdates ?? 0) > 0 || startingUp) && (remainingCount ?? 0) > 0;
   const analyzeRunning = (recentPendingUpdates ?? 0) > 0 && (pendingCount ?? 0) > 0;
 
   const succeeded = succeededCount ?? 0;
   const failed = blockedCount ?? 0;
-
   const method = methodLog?.[0]?.detail?.match(/mode=(\w+)/)?.[1] ?? null;
-
   const perMin = (recentFiveMin ?? 0) / 5;
   const total = succeeded + failed + (remainingCount ?? 0);
   const etaMin = backfillRunning && perMin > 0 ? Math.round((remainingCount ?? 0) / perMin) : null;

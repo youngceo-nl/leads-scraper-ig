@@ -14,6 +14,22 @@ export type FunnelEnrichResponse = {
   error?: string;
 };
 
+export async function saveProgramName(leadId: string, name: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "unauthorized" };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("leads")
+    .update({ funnel_program_name: name.trim() || null })
+    .eq("id", leadId);
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/leads");
+  return { ok: true };
+}
+
 export async function enrichFunnel(leadId: string): Promise<FunnelEnrichResponse> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();

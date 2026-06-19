@@ -24,8 +24,8 @@ export type ManagedAccount = {
   proxy_url: string | null; // dedicated residential proxy for this account, e.g. http://user:pass@host:port
 };
 
-// Password-stripped view sent to client components.
-export type ManagedAccountDisplay = Omit<ManagedAccount, "password" | "totp_secret">;
+// Sent to client components — includes credentials since this is a self-hosted tool.
+export type ManagedAccountDisplay = ManagedAccount;
 export type ActivityStatus = "very_active" | "active" | "semi_active" | "inactive";
 export type CrawlJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -47,7 +47,6 @@ export type AppSettings = {
   scrapingbee_api_key: string | null;
   serper_api_key: string | null;
   default_seeds: string[];
-  max_crawl_depth: number;
   max_profiles_per_account: number;
   crawl_score_threshold: number;
   min_followers: number;
@@ -87,6 +86,8 @@ export type AppSettings = {
   // Multi-account managed cookies (credentials stored for auto-refresh)
   instagram_accounts: ManagedAccount[];
   yt_accounts: ManagedAccount[];
+  backfill_cancel_requested: boolean;
+  backfill_started_at: string | null;
   updated_at: string;
 };
 

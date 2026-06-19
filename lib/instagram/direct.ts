@@ -1,6 +1,6 @@
 import "server-only";
 import type { RecentPost } from "@/lib/types";
-import { BrowserSession } from "@/lib/instagram/browser-fetch";
+import { BrowserSession, randomUA } from "@/lib/instagram/browser-fetch";
 
 // Free, direct-fetch profile metadata lookup against IG's own
 // `web_profile_info` endpoint. Same endpoint our ScrapingBee path hits, just
@@ -115,8 +115,10 @@ export async function fetchProfileMetadataDirect(opts: {
 
   const externalSession = opts.session ?? null;
 
-  // Only create a session when the caller didn't supply one.
-  const ownSession = !externalSession && sessionCookie ? new BrowserSession() : null;
+  // Only auto-create a BrowserSession when the caller omitted `session` entirely
+  // (undefined). Passing `session: null` explicitly means "use Node.js fetch" —
+  // useful for batch backfill where undici + ProxyAgent is faster and more reliable.
+  const ownSession = opts.session === undefined && sessionCookie ? new BrowserSession() : null;
   if (ownSession) await ownSession.init(sessionCookie!, opts.proxyUrl);
 
   const session = externalSession ?? ownSession;
@@ -162,6 +164,13 @@ async function _fetchProfileMetadata(opts: {
   }
 
   if (res.status === 404) return null;
+  if (res.status === 407) {
+    throw new InstagramDirectError(
+      `Proxy authentication failed (HTTP 407) — check proxy credentials for this account.`,
+      407,
+      false,
+    );
+  }
   if (res.status === 429) {
     throw new InstagramDirectError("Instagram rate-limited the request (HTTP 429). Slow down or wait.", 429, true);
   }
@@ -241,18 +250,6 @@ function jitter(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// Chrome-only UA pool — must stay consistent with web session cookies.
-// Android Instagram UAs paired with web cookies is an immediate detection signal.
-const USER_AGENTS = [
-  // Chrome on macOS
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-  // Chrome on Windows
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-];
-
 // Extract the sec-ch-ua hint matching the chosen UA (Chrome version)
 function secChUa(ua: string): string {
   const m = ua.match(/Chrome\/(\d+)/);
@@ -262,10 +259,6 @@ function secChUa(ua: string): string {
 
 function platform(ua: string): string {
   return ua.includes("Windows") ? "Windows" : "macOS";
-}
-
-function randomUA(): string {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
 // Extract csrftoken from a cookie string so it can be sent as X-CSRFToken

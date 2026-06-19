@@ -83,7 +83,7 @@ export function LiveOperationCard() {
             <Clock className="h-3.5 w-3.5 text-muted-foreground" />
           )}
           <span className="text-sm font-semibold">
-            {done ? "Completed" : stalled ? `${opLabel} — stalled` : opLabel}
+            {done ? "Completed" : stalled ? `${opLabel} — stalled` : status.isRunning && status.succeeded === 0 ? `${opLabel} — starting up…` : opLabel}
           </span>
           {status.isRunning && (
             <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900 px-1.5 py-0.5 rounded-full">

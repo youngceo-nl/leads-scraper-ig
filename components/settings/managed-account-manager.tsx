@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useRouter } from "next/navigation";
-import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie, setManagedAccountCookie, setManagedAccountProxy } from "@/app/actions/settings";
+import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie, setManagedAccountCookie, setManagedAccountProxy, setManagedAccountPassword } from "@/app/actions/settings";
 import type { ManagedAccountDisplay } from "@/lib/types";
 
 function relativeTime(iso: string | null): string {
@@ -21,7 +21,7 @@ function relativeTime(iso: string | null): string {
 function statusLabel(account: ManagedAccountDisplay): { color: string; text: string; Icon: React.ElementType } {
   if (account.checkpoint_state) return { color: "text-amber-600", text: "Verification needed", Icon: AlertTriangle };
   if (account.cookie && !account.last_error) return { color: "text-green-600", text: "Active", Icon: CheckCircle2 };
-  if (account.cookie && account.last_error) return { color: "text-amber-600", text: "Active (refresh failed)", Icon: AlertTriangle };
+  if (account.cookie && account.last_error) return { color: "text-destructive", text: "Cookie invalid", Icon: XCircle };
   if (!account.cookie && account.last_error) return { color: "text-destructive", text: "Login failed", Icon: XCircle };
   return { color: "text-muted-foreground", text: "Not logged in", Icon: MinusCircle };
 }
@@ -72,6 +72,10 @@ function AccountCard({
   const [cookieError, setCookieError] = useState<string | null>(null);
   const [proxyDraft, setProxyDraft] = useState(account.proxy_url ?? "");
   const [savingProxy, setSavingProxy] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState(account.password ?? "");
+  const [totpDraft, setTotpDraft] = useState(account.totp_secret ?? "");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordResult, setPasswordResult] = useState<string | null>(null);
 
   // Parse existing cookie string into individual fields
   function parseCookieField(cookie: string | null | undefined, key: string): string {
@@ -121,8 +125,14 @@ function AccountCard({
     setTesting(true);
     setTestResult(null);
     const res = await testManagedAccountCookie(platform, account.id);
+    if (res.checkpoint) {
+      // Checkpoint state is saved in DB — reload to show the verification box.
+      window.location.reload();
+      return;
+    }
     setTestResult(res);
     setTesting(false);
+    if (res.refreshed) router.refresh();
   };
 
   const handleCodeSubmit = async () => {
@@ -171,7 +181,7 @@ function AccountCard({
                   type="button" size="sm" variant="ghost" disabled={testing}
                   onClick={handleTest} className="h-7 px-2 text-xs"
                 >
-                  {testing ? "Testing…" : "Test"}
+                  {testing ? "Checking…" : "Test"}
                 </Button>
               )}
               <Button
@@ -303,6 +313,54 @@ function AccountCard({
             </Button>
           </div>
         )}
+
+        {/* Password — stored server-side for auto-refresh via Playwright */}
+        {platform === "instagram" && (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Auto-refresh credentials</p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Password</span>
+              <Input
+                type="text"
+                value={passwordDraft}
+                onChange={(e) => { setPasswordDraft(e.target.value); setPasswordResult(null); }}
+                placeholder="Instagram password"
+                autoComplete="new-password"
+                className="h-7 text-xs flex-1 font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">TOTP secret</span>
+              <Input
+                value={totpDraft}
+                onChange={(e) => setTotpDraft(e.target.value)}
+                placeholder="TOTP secret (optional, for 2FA)"
+                className="h-7 text-xs flex-1 font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                disabled={savingPassword || !passwordDraft.trim()}
+                onClick={async () => {
+                  setSavingPassword(true);
+                  setPasswordResult(null);
+                  const res = await setManagedAccountPassword(platform, account.id, passwordDraft, totpDraft || null);
+                  setSavingPassword(false);
+                  if (res.ok) { setPasswordResult("Saved — cookie will auto-refresh every 12h"); }
+                  else setPasswordResult(res.error ?? "Failed to save");
+                }}
+              >
+                {savingPassword ? "Saving…" : "Save password"}
+              </Button>
+              {passwordResult && (
+                <span className={`text-xs ${passwordResult.startsWith("Saved") ? "text-green-600" : "text-destructive"}`}>
+                  {passwordResult}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Checkpoint verification row */}
@@ -386,6 +444,10 @@ export function ManagedAccountManager({
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
 
+  type TestAllResult = { ok: boolean; message: string };
+  const [testingAllId, setTestingAllId] = useState<string | null>(null);
+  const [testAllResults, setTestAllResults] = useState<Record<string, TestAllResult>>({});
+
   const [label, setLabel] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [newSessionId, setNewSessionId] = useState("");
@@ -393,6 +455,9 @@ export function ManagedAccountManager({
   const [newDsUserId, setNewDsUserId] = useState("");
   const [newRur, setNewRur] = useState("");
   const [password, setPassword] = useState("");
+  const [igPassword, setIgPassword] = useState("");
+  const [igTotp, setIgTotp] = useState("");
+  const [showIgPw, setShowIgPw] = useState(false);
 
   const assembleNewCookie = () => {
     const parts: string[] = [];
@@ -432,38 +497,88 @@ export function ManagedAccountManager({
     onPendingDelete?.(id);
   };
 
+  const handleTestAll = async () => {
+    const visible = accounts.filter((a) => !pendingDeleteIds.has(a.id) && !!a.cookie);
+    setTestAllResults({});
+    for (const account of visible) {
+      setTestingAllId(account.id);
+      const res = await testManagedAccountCookie(platform, account.id);
+      if (res.checkpoint) {
+        window.location.reload();
+        return;
+      }
+      setTestAllResults((prev) => ({ ...prev, [account.id]: res }));
+      if (res.refreshed) router.refresh();
+    }
+    setTestingAllId(null);
+    router.refresh();
+  };
+
   const handleAdd = () => {
     if (!label.trim()) return;
-    if (isIg && !newSessionId.trim()) return;
+    if (isIg && !newSessionId.trim() && !igPassword.trim()) return;
     if (!isIg && !password.trim()) return;
     setAddResult(null);
     startAdd(async () => {
       const res = await addManagedAccount(platform, {
         label: label.trim(),
         account_email: accountEmail.trim() || undefined,
-        cookie: isIg ? assembleNewCookie() : undefined,
-        password: !isIg ? password.trim() : undefined,
+        cookie: isIg && newSessionId.trim() ? assembleNewCookie() : undefined,
+        password: isIg ? (igPassword.trim() || undefined) : password.trim(),
+        totp_secret: isIg ? (igTotp.trim() || undefined) : undefined,
       });
       setAddResult(res ?? { ok: true });
       if (res.ok) {
-        setLabel(""); setAccountEmail(""); setNewSessionId(""); setNewCsrfToken(""); setNewDsUserId(""); setNewRur(""); setPassword("");
+        setLabel(""); setAccountEmail(""); setNewSessionId(""); setNewCsrfToken(""); setNewDsUserId(""); setNewRur("");
+        setPassword(""); setIgPassword(""); setIgTotp("");
         window.location.reload();
       }
     });
   };
 
+  const visibleAccounts = accounts.filter((a) => !pendingDeleteIds.has(a.id));
+  const isTesting = testingAllId !== null;
+
   return (
     <div className="space-y-3">
+      {/* Header row with Test all button */}
+      {isIg && visibleAccounts.length > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">Accounts</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-xs"
+            disabled={isTesting}
+            onClick={() => void handleTestAll()}
+          >
+            {isTesting ? (
+              <>
+                <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+                Testing @{accounts.find((a) => a.id === testingAllId)?.label}…
+              </>
+            ) : "Test all"}
+          </Button>
+        </div>
+      )}
+
       {/* One card per account — hide ones queued for deletion */}
-      {accounts.filter((a) => !pendingDeleteIds.has(a.id)).map((account) => (
-        <AccountCard
-          key={account.id}
-          account={account}
-          platform={platform}
-          refreshing={refreshingIds.has(account.id)}
-          onRefresh={() => void handleRefresh(account.id)}
-          onRemove={() => handleRemove(account.id)}
-        />
+      {visibleAccounts.map((account) => (
+        <div key={account.id}>
+          <AccountCard
+            account={account}
+            platform={platform}
+            refreshing={refreshingIds.has(account.id)}
+            onRefresh={() => void handleRefresh(account.id)}
+            onRemove={() => handleRemove(account.id)}
+          />
+          {testAllResults[account.id] && (
+            <p className={`text-xs px-1 pt-1 ${testAllResults[account.id].ok ? "text-green-600" : "text-destructive"}`}>
+              {testAllResults[account.id].message}
+            </p>
+          )}
+        </div>
       ))}
 
       {accounts.length > 0 && <Separator />}
@@ -532,7 +647,42 @@ export function ManagedAccountManager({
           </div>
         )}
 
-{/* YouTube: keep original password form */}
+        {/* IG password — optional, enables auto-refresh */}
+        {isIg && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Password <span className="text-muted-foreground font-normal">— optional, enables auto-refresh every 12h</span>
+            </Label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Password</span>
+              <div className="relative flex-1">
+                <Input
+                  type={showIgPw ? "text" : "password"}
+                  value={igPassword}
+                  onChange={(e) => setIgPassword(e.target.value)}
+                  placeholder="Instagram password"
+                  autoComplete="new-password"
+                  className="h-7 text-xs pr-7"
+                />
+                <button type="button" tabIndex={-1} onClick={() => setShowIgPw((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showIgPw ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">TOTP secret</span>
+              <Input
+                value={igTotp}
+                onChange={(e) => setIgTotp(e.target.value)}
+                placeholder="TOTP secret (optional, for 2FA accounts)"
+                className="h-7 text-xs flex-1 font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* YouTube: keep original password form */}
         {!isIg && (
           <div className="space-y-1">
             <Label htmlFor={`${platform}-pw`} className="text-xs">Password</Label>
@@ -559,7 +709,7 @@ export function ManagedAccountManager({
             type="button"
             size="sm"
             variant="secondary"
-            disabled={addPending || !label.trim() || (isIg ? !newSessionId.trim() : !password.trim())}
+            disabled={addPending || !label.trim() || (isIg ? (!newSessionId.trim() && !igPassword.trim()) : !password.trim())}
             onClick={handleAdd}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${addPending ? "animate-spin" : ""}`} />

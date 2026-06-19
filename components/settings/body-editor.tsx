@@ -25,7 +25,7 @@ function esc(s: string) {
 }
 function inlineMd(s: string) {
   return s
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:inherit">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#1558d6;text-decoration:underline">$1</a>')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>");
 }
@@ -158,12 +158,36 @@ export function BodyEditor({
         <>
           {/* Hidden textarea still in DOM so FormData picks it up */}
           <textarea name={name} value={value} onChange={() => {}} className="sr-only" aria-hidden />
-          <div
-            className="min-h-[220px] rounded-b-md border px-3 py-2.5 text-sm bg-background leading-relaxed"
-            dangerouslySetInnerHTML={{
-              __html: renderPreview(value) || "<em style='color:#888'>Nothing to preview yet</em>",
-            }}
-          />
+          {/* Gmail-accurate preview */}
+          <div className="rounded-b-md border bg-[#f6f8fc] p-3">
+            {/* Gmail chrome */}
+            <div className="rounded-lg border border-[#e0e0e0] bg-white shadow-sm overflow-hidden">
+              {/* Subject bar */}
+              <div className="border-b border-[#e0e0e0] px-4 py-3">
+                <span className="text-[22px] font-normal text-[#202124] tracking-tight">Subject preview</span>
+              </div>
+              {/* Sender row */}
+              <div className="flex items-start gap-3 px-4 py-3 border-b border-[#f1f3f4]">
+                <div className="w-9 h-9 rounded-full bg-[#1a73e8] flex items-center justify-center text-white text-sm font-medium flex-shrink-0">J</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm font-medium text-[#202124]">Julian Fraiquin</span>
+                    <span className="text-xs text-[#5f6368]">&lt;your@email.com&gt;</span>
+                    <span className="ml-auto text-xs text-[#5f6368] flex-shrink-0">just now</span>
+                  </div>
+                  <div className="text-xs text-[#5f6368]">to me</div>
+                </div>
+              </div>
+              {/* Body */}
+              <div
+                className="px-4 py-5"
+                style={{ fontFamily: "Arial, Helvetica, sans-serif", fontSize: "13px", lineHeight: "1.6", color: "#202124" }}
+                dangerouslySetInnerHTML={{
+                  __html: renderPreview(value) || "<em style='color:#888'>Nothing to preview yet</em>",
+                }}
+              />
+            </div>
+          </div>
         </>
       ) : (
         <Textarea

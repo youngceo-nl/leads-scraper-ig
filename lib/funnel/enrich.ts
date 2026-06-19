@@ -45,16 +45,6 @@ export async function enrichFunnelForLead(opts: {
     const apiKey = settings.scrapingbee_api_key || process.env.SCRAPINGBEE_API_KEY || "";
 
     if (!apiKey) {
-      // Last resort: save whatever we extracted from the URL
-      if (domainName) {
-        return persistResult({
-          leadId: opts.leadId,
-          funnel_url: opts.externalLink,
-          funnel_platform: "unknown",
-          program: { program_name: domainName, offer_summary: null, price: null },
-          error: null,
-        });
-      }
       return persistError(opts.leadId, "ScrapingBee API key not configured");
     }
 
@@ -124,16 +114,6 @@ export async function enrichFunnelForLead(opts: {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // On any hard error, still persist a domain name if we have one
-    if (domainName) {
-      return persistResult({
-        leadId: opts.leadId,
-        funnel_url: opts.externalLink,
-        funnel_platform: "unknown",
-        program: { program_name: domainName, offer_summary: null, price: null },
-        error: msg.slice(0, 400),
-      });
-    }
     return persistError(opts.leadId, msg);
   }
 }
@@ -216,6 +196,20 @@ function extractFromPage(
   };
 }
 
+// Reject names that are clearly not a real program offer.
+function sanitizeProgramName(name: string | null): string | null {
+  if (!name) return null;
+  const s = name.trim();
+  if (s.length < 3 || s.length > 100) return null;
+  if (/^\s*@/.test(s)) return null;
+  if (/\|\s*(instagram|youtube|tiktok|twitter|facebook|snapchat|linktree|stan|beacons|whop)/i.test(s)) return null;
+  if (/^join\s+/i.test(s)) return null;
+  if (/\bdiscord\b.*\b(server|community|invite)\b/i.test(s)) return null;
+  // Pure lowercase no-space string → just a username/handle
+  if (/^[a-z][a-z0-9]{2,}$/.test(s)) return null;
+  return s;
+}
+
 async function persistResult(args: {
   leadId: string;
   funnel_url: string;
@@ -223,13 +217,14 @@ async function persistResult(args: {
   program: { program_name: string | null; offer_summary: string | null; price: string | null };
   error: string | null;
 }): Promise<FunnelEnrichmentResult> {
+  const program_name = sanitizeProgramName(args.program.program_name);
   const sb = createAdminClient();
   await sb
     .from("leads")
     .update({
       funnel_url: args.funnel_url,
       funnel_platform: args.funnel_platform,
-      funnel_program_name: args.program.program_name,
+      funnel_program_name: program_name,
       funnel_offer_summary: args.program.offer_summary,
       funnel_price: args.program.price,
       funnel_extracted_at: new Date().toISOString(),
@@ -240,7 +235,7 @@ async function persistResult(args: {
     ok: !args.error,
     funnel_url: args.funnel_url,
     funnel_platform: args.funnel_platform,
-    funnel_program_name: args.program.program_name,
+    funnel_program_name: program_name,
     funnel_offer_summary: args.program.offer_summary,
     funnel_price: args.program.price,
     error: args.error,

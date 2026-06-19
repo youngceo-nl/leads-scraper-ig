@@ -14,6 +14,22 @@ const BAD_TITLES = new Set([
   "page not found", "404", "loading...", "loading",
 ]);
 
+// Returns true if the string is clearly NOT a program/offer name.
+function isJunk(s: string): boolean {
+  // Social aggregator titles: "@handle | Instagram, YouTube..."
+  if (/^\s*@/.test(s)) return true;
+  // "X | Instagram" / "X | Linktree" etc.
+  if (/\|\s*(instagram|youtube|tiktok|twitter|facebook|snapchat|linktree|stan|beacons|whop)/i.test(s)) return true;
+  // Discord / community invites
+  if (/^join\s+/i.test(s)) return true;
+  if (/\bdiscord\b.*\b(server|community|invite)\b/i.test(s)) return true;
+  // All-lowercase no-space strings — usernames masquerading as names
+  if (/^[a-z][a-z0-9]{2,}$/.test(s)) return true;
+  // Sentence fragments — too long (>80 chars) or contains sentence punctuation
+  if (s.length > 80) return true;
+  return false;
+}
+
 export function extractFunnel(opts: { html: string; platform: string }): FunnelExtraction {
   const $ = cheerio.load(opts.html);
   const ogTitle = $('meta[property="og:title"], meta[name="og:title"]').attr("content")?.trim() || null;
@@ -47,6 +63,7 @@ function pickBest(candidates: (string | null)[], platform: string): string | nul
     if (BAD_TITLES.has(trimmed.toLowerCase())) continue;
     if (trimmed.toLowerCase() === platform.toLowerCase()) continue;
     if (trimmed.length < 3 || trimmed.length > 200) continue;
+    if (isJunk(trimmed)) continue;
     return trimmed;
   }
   return null;

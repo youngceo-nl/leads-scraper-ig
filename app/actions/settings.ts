@@ -30,7 +30,6 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     claude_model: String(formData.get("claude_model") ?? prev.claude_model),
     scrapingbee_api_key: String(formData.get("scrapingbee_api_key") ?? "") || null,
     serper_api_key: String(formData.get("serper_api_key") ?? "") || null,
-    max_crawl_depth: num(formData.get("max_crawl_depth"), prev.max_crawl_depth),
     max_profiles_per_account: num(formData.get("max_profiles_per_account"), prev.max_profiles_per_account),
     crawl_score_threshold: num(formData.get("crawl_score_threshold"), prev.crawl_score_threshold),
     min_followers: num(formData.get("min_followers"), prev.min_followers),
@@ -194,16 +193,19 @@ export async function refreshYtCookieNow(creds?: {
 async function testInstagramCookieString(
   cookie: string,
   username?: string,
+  proxyUrl?: string | null,
 ): Promise<{ ok: boolean; message: string }> {
   const probe = username ?? "natgeo";
   try {
     const { fetchProfileMetadataDirect } = await import("@/lib/instagram/direct");
-    const meta = await fetchProfileMetadataDirect({ username: probe, sessionCookie: cookie, skipReels: true });
+    const meta = await fetchProfileMetadataDirect({ username: probe, sessionCookie: cookie, skipReels: true, proxyUrl: proxyUrl ?? null });
     if (!meta) return { ok: false, message: "Cookie may be invalid — Instagram returned no user data" };
-    return { ok: true, message: `Cookie valid — fetched @${probe} (${meta.followers?.toLocaleString()} followers)` };
+    const proxyNote = proxyUrl ? " (via proxy)" : "";
+    return { ok: true, message: `Cookie valid${proxyNote} — fetched @${probe} (${meta.followers?.toLocaleString()} followers)` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("429")) return { ok: true, message: "Cookie looks valid (rate-limited on probe, but session is active)" };
+    if (msg.includes("407")) return { ok: false, message: "Proxy authentication failed (407) — check the proxy URL credentials" };
     if (msg.includes("401") || msg.includes("403") || msg.includes("login_required")) {
       return { ok: false, message: "Cookie rejected by Instagram — session expired or invalid" };
     }
@@ -368,7 +370,7 @@ export async function submitCheckpointCode(
 export async function testManagedAccountCookie(
   platform: Platform,
   id: string,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; refreshed?: boolean; checkpoint?: boolean }> {
   await requireUser();
   const settings = await getSettings(true);
   const key = accountsKey(platform);
@@ -377,16 +379,47 @@ export async function testManagedAccountCookie(
   if (!account?.cookie) return { ok: false, message: "No cookie saved for this account" };
 
   if (platform === "instagram") {
-    const result = await testInstagramCookieString(account.cookie, account.label);
+    const result = await testInstagramCookieString(account.cookie, account.label, account.proxy_url);
+
     if (result.ok) {
-      // Clear stale last_error so the badge goes back to "Active"
+      const updated = accounts.map((a) => a.id === id ? { ...a, last_error: null } : a);
+      await updateSettings({ [key]: updated } as Partial<AppSettings>);
+      revalidatePath("/settings");
+      return result;
+    }
+
+    // Cookie is dead — mark it, then attempt auto re-login if a password is stored.
+    if (!account.password) {
+      const updated = accounts.map((a) => a.id === id ? { ...a, last_error: result.message } : a);
+      await updateSettings({ [key]: updated } as Partial<AppSettings>);
+      revalidatePath("/settings");
+      return { ok: false, message: result.message };
+    }
+
+    // Has password — try to re-login now.
+    try {
+      const loginResult = await loginManaged(platform, account);
+      if ("checkpoint" in loginResult) {
+        const updated = accounts.map((a) =>
+          a.id === id ? { ...a, checkpoint_state: loginResult.state, last_error: loginResult.message } : a,
+        );
+        await updateSettings({ [key]: updated } as Partial<AppSettings>);
+        revalidatePath("/settings");
+        return { ok: false, message: loginResult.message, checkpoint: true };
+      }
       const updated = accounts.map((a) =>
-        a.id === id ? { ...a, last_error: null } : a,
+        a.id === id ? { ...a, cookie: loginResult.cookie, cookie_set_at: new Date().toISOString(), last_error: null, checkpoint_state: null } : a,
       );
       await updateSettings({ [key]: updated } as Partial<AppSettings>);
       revalidatePath("/settings");
+      return { ok: true, message: "Cookie was invalid — re-logged in successfully.", refreshed: true };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const updated = accounts.map((a) => a.id === id ? { ...a, last_error: error } : a);
+      await updateSettings({ [key]: updated } as Partial<AppSettings>);
+      revalidatePath("/settings");
+      return { ok: false, message: `Cookie invalid. Re-login failed: ${error}` };
     }
-    return result;
   }
 
   return { ok: false, message: "Test not supported for this platform" };
@@ -418,6 +451,24 @@ export async function setManagedAccountEmail(platform: Platform, id: string, ema
   const updated = accounts.map((a) => a.id === id ? { ...a, account_email: email.trim() || null } : a);
   await updateSettings({ [key]: updated } as Partial<AppSettings>);
   revalidatePath("/settings");
+}
+
+export async function setManagedAccountPassword(
+  platform: Platform,
+  id: string,
+  password: string,
+  totp_secret: string | null,
+): Promise<{ ok?: true; error?: string }> {
+  await requireUser();
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  const updated = accounts.map((a) =>
+    a.id === id ? { ...a, password: password.trim(), totp_secret: totp_secret?.trim() || null } : a,
+  );
+  await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+  return { ok: true };
 }
 
 export async function setManagedAccountProxy(platform: Platform, id: string, proxyUrl: string): Promise<void> {

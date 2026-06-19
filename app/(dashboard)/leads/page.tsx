@@ -20,6 +20,7 @@ import { statusLabel } from "@/lib/labels";
 import { ChevronLeft, ChevronRight, ExternalLink, Youtube, Linkedin } from "lucide-react";
 import { LeadsActionsMenu } from "@/components/leads/actions-menu";
 import { LeadsSearchBar } from "@/components/leads/search-bar";
+import { ProgramNameCell } from "@/components/leads/program-name-cell";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 50;
@@ -261,20 +262,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground" data-col="level">{l.crawl_depth}</TableCell>
                   <TableCell className="text-xs" data-col="offer">
-                    {l.funnel_program_name ? (
-                      <div className="space-y-0.5 max-w-[200px]">
-                        <p className="font-medium truncate" title={l.funnel_program_name}>
-                          {l.funnel_program_name}
-                        </p>
-                        {l.funnel_platform && (
-                          <span className="text-[10px] text-muted-foreground">{l.funnel_platform}</span>
-                        )}
-                      </div>
-                    ) : l.funnel_extraction_error ? (
-                      <span className="text-[10px] text-red-600" title={l.funnel_extraction_error}>error</span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <ProgramNameCell
+                      leadId={l.id}
+                      initial={l.funnel_program_name ?? null}
+                      platform={l.funnel_platform ?? null}
+                    />
                   </TableCell>
                   <TableCell data-col="youtube">
                     {l.youtube_url ? (

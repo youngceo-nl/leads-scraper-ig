@@ -15,6 +15,7 @@ function cookieKey(cookie: string) {
 export type PoolEntry = {
   cookie: string;
   proxyUrl: string | null;
+  accountUsername: string | null;
 };
 
 export function buildCookiePool(settings: AppSettings): PoolEntry[] {
@@ -26,7 +27,7 @@ export function buildCookiePool(settings: AppSettings): PoolEntry[] {
     const c = a.cookie?.trim();
     if (c && !seen.has(c)) {
       seen.add(c);
-      pool.push({ cookie: c, proxyUrl: a.proxy_url?.trim() || null });
+      pool.push({ cookie: c, proxyUrl: a.proxy_url?.trim() || null, accountUsername: a.label ?? null });
     }
   }
 
@@ -36,15 +37,33 @@ export function buildCookiePool(settings: AppSettings): PoolEntry[] {
     const t = c.trim();
     if (t && !seen.has(t)) {
       seen.add(t);
-      pool.push({ cookie: t, proxyUrl: globalProxy });
+      pool.push({ cookie: t, proxyUrl: globalProxy, accountUsername: null });
     }
   }
 
   // Legacy single cookie
   const single = (settings.instagram_session_cookie || process.env.INSTAGRAM_SESSION_COOKIE || "").trim();
   if (single && !seen.has(single)) {
-    pool.push({ cookie: single, proxyUrl: globalProxy });
+    pool.push({ cookie: single, proxyUrl: globalProxy, accountUsername: null });
   }
+
+  return pool;
+}
+
+// All unique proxy URLs across every managed account + global fallback.
+// Kept separate from the cookie pool so cookies and proxies can rotate
+// independently — a dead proxy on one account doesn't strand its cookie.
+export function buildProxyPool(settings: AppSettings): string[] {
+  const seen = new Set<string>();
+  const pool: string[] = [];
+
+  for (const a of settings.instagram_accounts ?? []) {
+    const p = a.proxy_url?.trim();
+    if (p && !seen.has(p)) { seen.add(p); pool.push(p); }
+  }
+
+  const global = settings.instagram_proxy_url?.trim() || process.env.INSTAGRAM_PROXY_URL || "";
+  if (global && !seen.has(global)) pool.push(global);
 
   return pool;
 }

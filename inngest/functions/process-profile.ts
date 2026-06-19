@@ -146,11 +146,11 @@ export const processProfile = inngest.createFunction(
       }
     }
 
-    // 7. Recurse if quality is high enough AND we have depth left
+    // 7. Recurse if quality is high enough AND we're still at the seed level (depth 0 → 1 only)
     const shouldRecurse =
       status !== "rejected" &&
       overall >= settings.crawl_score_threshold &&
-      depth < settings.max_crawl_depth;
+      depth < 1;
 
     if (shouldRecurse) {
       await step.sendEvent("recurse", {

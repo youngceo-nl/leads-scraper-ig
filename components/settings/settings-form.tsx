@@ -128,12 +128,10 @@ export function SettingsForm({
         <Card>
           <CardHeader>
             <CardTitle>Instagram search settings</CardTitle>
-            <p className="text-sm text-muted-foreground">Controls how deep we crawl through Instagram following lists when a source account search runs.</p>
+            <p className="text-sm text-muted-foreground">Controls how the Instagram following list crawl behaves when a source account search runs.</p>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3">
-            <Field label="How many levels deep to search" name="max_crawl_depth" type="number" defaultValue={String(initial.max_crawl_depth)} hint="Level 1 = people the source account follows. Level 2 also checks who those people follow. Higher means more leads but more cost." />
             <Field label="Accounts to check per source" name="max_profiles_per_account" type="number" defaultValue={String(initial.max_profiles_per_account)} hint="How many accounts to look at from each source before stopping." />
-            <Field label="Go deeper when a lead scores at least" name="crawl_score_threshold" type="number" step="0.1" defaultValue={String(initial.crawl_score_threshold)} hint="When a lead scores this high (0–10), we also search the people they follow." />
           </CardContent>
         </Card>
 

@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     .insert({
       seed_id: seed.id,
       status: "queued",
-      max_depth: settings.max_crawl_depth,
+      max_depth: 1,
     })
     .select("id")
     .single();

@@ -162,7 +162,7 @@ export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise
     if (activeSeedIds.has(seed.id)) continue;
     const { data: job, error: jobErr } = await admin
       .from("crawl_jobs")
-      .insert({ seed_id: seed.id, status: "queued", max_depth: settings.max_crawl_depth })
+      .insert({ seed_id: seed.id, status: "queued", max_depth: 1 })
       .select("id")
       .single();
     if (jobErr || !job) continue;
@@ -223,7 +223,7 @@ export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvi
 
   const { data: job, error: jobErr } = await admin
     .from("crawl_jobs")
-    .insert({ seed_id: seed.id, status: "queued", max_depth: settings.max_crawl_depth })
+    .insert({ seed_id: seed.id, status: "queued", max_depth: 1 })
     .select("id")
     .single();
   if (jobErr || !job) return { error: jobErr?.message ?? "job_create_failed" };

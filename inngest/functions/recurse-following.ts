@@ -27,7 +27,7 @@ export const recurseFollowing = inngest.createFunction(
     }
 
     const settings = await step.run("load-settings", () => getSettings());
-    if (nextDepth > settings.max_crawl_depth) return { skipped: "max_depth" };
+    if (nextDepth > 1) return { skipped: "max_depth" };
 
     const token = resolveApifyToken(settings);
 
