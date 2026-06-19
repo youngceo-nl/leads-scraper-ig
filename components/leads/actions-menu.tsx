@@ -11,15 +11,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { CsvImportButton } from "@/components/leads/csv-import-button";
 import {
-  MoreHorizontal, RefreshCw, XCircle, SearchCode, Upload, Download, Play, DatabaseZap,
+  MoreHorizontal, RefreshCw, XCircle, SearchCode, Upload, Download, Play, DatabaseZap, MailWarning,
 } from "lucide-react";
 import {
   rescoreAllLeads,
   clearRejectedScores,
   retryFunnelEnrichment,
+  rerunFunnelForAllQualified,
   triggerBulkBackfill,
+  reEnrichBouncedLeads,
+  reenrichLeadsWithoutEmail,
 } from "@/app/actions/leads";
 import { analyzeAllPending } from "@/app/actions/process-lead";
+import { checkEmailBounces } from "@/app/actions/outreach";
 
 const openActivity = (detail?: Record<string, unknown>) =>
   window.dispatchEvent(new CustomEvent("open-activity-drawer", { detail: detail ?? {} }));
@@ -30,6 +34,9 @@ type Props = {
   rejectedWithScore: number;
   missingProgramNames: number;
   backfillCount: number;
+  qualifiedFunnelCount: number;
+  bouncedCount: number;
+  noEmailCount: number;
   exportHref: string;
 };
 
@@ -39,6 +46,9 @@ export function LeadsActionsMenu({
   rejectedWithScore,
   missingProgramNames,
   backfillCount,
+  qualifiedFunnelCount,
+  bouncedCount,
+  noEmailCount,
   exportHref,
 }: Props) {
   const router = useRouter();
@@ -55,7 +65,7 @@ export function LeadsActionsMenu({
     });
   };
 
-  const hasBulk = pendingCount > 0 || scoreableCount > 0 || rejectedWithScore > 0 || missingProgramNames > 0 || backfillCount > 0;
+  const hasBulk = pendingCount > 0 || scoreableCount > 0 || rejectedWithScore > 0 || missingProgramNames > 0 || backfillCount > 0 || qualifiedFunnelCount > 0 || bouncedCount > 0 || noEmailCount > 0;
 
   return (
     <>
@@ -78,6 +88,16 @@ export function LeadsActionsMenu({
               <Upload className="h-4 w-4 mr-2" />
               Export CSV
             </a>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => run(
+              () => checkEmailBounces(),
+              { label: "Checking Gmail for bounced emails…", type: "bounce_check" },
+              true,
+            )}
+          >
+            <MailWarning className="h-4 w-4 mr-2" />
+            Check bounces
           </DropdownMenuItem>
 
           {hasBulk && <DropdownMenuSeparator />}
@@ -114,6 +134,27 @@ export function LeadsActionsMenu({
             <DropdownMenuItem onClick={() => run(() => retryFunnelEnrichment(50), {}, true)}>
               <SearchCode className="h-4 w-4 mr-2" />
               Re-enrich programs ({missingProgramNames})
+            </DropdownMenuItem>
+          )}
+
+          {qualifiedFunnelCount > 0 && (
+            <DropdownMenuItem onClick={() => run(() => rerunFunnelForAllQualified(), { label: "Re-running funnel for all qualified", total: qualifiedFunnelCount, type: "funnel_rerun" })}>
+              <SearchCode className="h-4 w-4 mr-2" />
+              Re-run funnel — all qualified ({qualifiedFunnelCount})
+            </DropdownMenuItem>
+          )}
+
+          {noEmailCount > 0 && (
+            <DropdownMenuItem onClick={() => run(() => reenrichLeadsWithoutEmail(), { label: "Re-enriching leads without email", total: noEmailCount, type: "reenrich_no_email" }, true)}>
+              <MailWarning className="h-4 w-4 mr-2" />
+              Re-enrich without email ({noEmailCount})
+            </DropdownMenuItem>
+          )}
+
+          {bouncedCount > 0 && (
+            <DropdownMenuItem onClick={() => run(() => reEnrichBouncedLeads(), { label: "Re-enriching bounced leads", total: bouncedCount, type: "reenrich_bounced" }, true)}>
+              <MailWarning className="h-4 w-4 mr-2" />
+              Re-enrich bounced ({bouncedCount})
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>

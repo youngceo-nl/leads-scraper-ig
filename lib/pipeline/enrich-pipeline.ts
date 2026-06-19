@@ -7,7 +7,6 @@ import { findYouTubeChannelFromPage } from "@/lib/youtube/from-page";
 import { extractYouTubeChannelUrl } from "@/lib/youtube/channel-url";
 import { attemptYoutubeEmail } from "@/lib/youtube/email-from-channel";
 import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured, checkYoutubeCookieLive } from "@/lib/youtube/refresh-cookie";
-import { scrapeWebsiteForEmail } from "@/lib/website/scrape-email";
 import { extractEmailFromText } from "@/lib/leads/email-extract";
 import { inferEmailFromDomain, extractDomain } from "@/lib/email/domain-inference";
 import { findEmailWithHunter } from "@/lib/email/hunter";
@@ -238,36 +237,9 @@ export async function enrichLeadPipeline(opts: {
     steps.push("yt_cookie_scrape: skipped (no channel found)");
   }
 
-  // ── Step 3: scrape the website linked in their bio / funnel URL (free). ───
-  const hasSite = [externalLink, funnelUrl].some(
-    (u) => u && !extractYouTubeChannelUrl(u) && !u.includes("linkedin.com"),
-  );
-  if (hasSite) emit({ stage: "website", state: "start", label: "Their website…" });
-  let websiteScraped = false;
-  for (const url of [externalLink, funnelUrl]) {
-    if (!url || extractYouTubeChannelUrl(url) || url.includes("linkedin.com")) continue;
-    websiteScraped = true;
-    const { email: siteEmail, error: siteErr } = await scrapeWebsiteForEmail(url);
-    if (siteEmail) {
-      emit({ stage: "website", state: "hit", label: "Found on website" });
-      return persistAndReturn({
-        leadId: opts.leadId,
-        patch: {
-          email: siteEmail,
-          email_status: "found",
-          email_provider: "website_scrape",
-          email_verifier: null,
-          enriched_at: new Date().toISOString(),
-          enrichment_error: null,
-        },
-        result: { ok: true, linkedin_url: existingLinkedin, youtube_url: youtubeUrl, email: siteEmail, email_status: "found", source: "website", error: null },
-      });
-    }
-    steps.push(`website(${url.slice(0, 40)}): ${siteErr ?? "none"}`);
-  }
-  if (!websiteScraped) steps.push("website: skipped (no link or is YT/LI)");
-
-  // ── Step 4: domain + name inference — last resort (Hunter.io if key set, else free DNS guess). ──
+  // ── Step 3: domain + name via Hunter.io, then free DNS pattern guess. ───────
+  // Hunter (first + last name + domain) gives verified business addresses and
+  // is far less likely to bounce than scraping generic contact pages.
   {
     const hunterKey = settings.hunter_api_key || process.env.HUNTER_API_KEY || "";
     const domain = extractDomain(externalLink ?? funnelUrl);
@@ -327,15 +299,15 @@ export async function enrichLeadPipeline(opts: {
     }
   }
 
+
   // ── Nothing turned up through any of the available (free) public sources. ──
-  // Email enrichment relies only on what people publish themselves: the
-  // Instagram bio, the website linked in their bio, and their YouTube About
-  // page. Build a clear, human-readable explanation of what we tried — and,
+  // Build a clear, human-readable explanation of what we tried — and,
   // when a lookup was skipped because an integration isn't set up, say exactly
   // what to configure so the user can act on it.
   const checked: string[] = ["the Instagram bio"];
-  if (websiteScraped) checked.push("the website in their bio");
   if (youtubeUrl) checked.push("their YouTube About page");
+  if (steps.some((s) => s.startsWith("hunter:"))) checked.push("Hunter.io");
+  else if (steps.some((s) => s.startsWith("domain_inference:"))) checked.push("domain pattern lookup");
 
   // Surface the most actionable problem first. A blocked/misconfigured lookup
   // is far more useful to the user than a generic "nothing found".
@@ -367,14 +339,6 @@ export async function enrichLeadPipeline(opts: {
   // 5) Channel found but no cookie at all to read the About page.
   else if (youtubeUrl && !ytGoogleCookie && !youtubeLoginConfigured(settings)) {
     problems.push("To read emails from YouTube About pages, add a YouTube session cookie in Settings.");
-  }
-
-  // 6) The website in their bio couldn't be read (timeout/blocked) — distinct
-  //    from "we read it and there was no email".
-  const siteErr = steps.find((s) => s.startsWith("website(") && !/: (no_email_found|none)$/.test(s));
-  if (siteErr) {
-    const reason = siteErr.replace(/^website\([^)]*\):\s*/, "");
-    problems.push(`We couldn't fully read the website in their bio (${shorten(reason)}).`);
   }
 
   const trace = steps.join(" · ");

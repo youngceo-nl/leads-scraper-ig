@@ -5,6 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/config/settings";
 import { sendEmail, gmailReady } from "@/lib/outreach/gmail";
 import { renderTemplate, buildLeadContext, textToHtml } from "@/lib/outreach/template";
+import { logCrawl } from "@/lib/pipeline/persist";
+import { gmailSearch, gmailGetMessage } from "@/lib/google/gmail-api";
 
 export type RenderedOutreach = {
   to: string | null;
@@ -109,6 +111,15 @@ export async function sendOutreach(opts: {
       })
       .eq("id", opts.leadId);
 
+    await logCrawl({
+      crawl_job_id: null,
+      profile_username: lead.username,
+      parent_username: null,
+      action: "email_sent",
+      depth: 0,
+      detail: `To: ${to} · Subject: ${subject}`,
+    });
+
     revalidatePath("/leads");
     revalidatePath(`/leads/${opts.leadId}`);
     return { ok: true, message_id: result.messageId };
@@ -128,8 +139,103 @@ export async function sendOutreach(opts: {
       .from("leads")
       .update({ last_outreach_error: msg })
       .eq("id", opts.leadId);
+
+    await logCrawl({
+      crawl_job_id: null,
+      profile_username: lead.username,
+      parent_username: null,
+      action: "email_failed",
+      depth: 0,
+      status: "failure",
+      detail: msg.slice(0, 200),
+    });
     revalidatePath("/leads");
     revalidatePath(`/leads/${opts.leadId}`);
     return { ok: false, error: msg };
   }
+}
+
+export type CheckBouncesResult = {
+  ok: boolean;
+  bounced: number;
+  checked: number;
+  error?: string;
+};
+
+// Search Gmail for NDR (bounce) messages and mark matching sent emails as bounced.
+// Matches NDRs to outreach_messages via the RFC Message-Id stored in the
+// NDR's In-Reply-To header.
+export async function checkEmailBounces(): Promise<CheckBouncesResult> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, bounced: 0, checked: 0, error: "unauthorized" };
+
+  if (!(await gmailReady())) {
+    return { ok: false, bounced: 0, checked: 0, error: "Gmail not connected — connect it in Settings → Outreach." };
+  }
+
+  const admin = createAdminClient();
+
+  // Load sent messages that have a stored RFC Message-Id and a username for logging
+  const { data: sent } = await admin
+    .from("outreach_messages")
+    .select("id, lead_id, to_email, message_id, leads(username)")
+    .eq("status", "sent")
+    .not("message_id", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(200);
+
+  if (!sent?.length) return { ok: true, bounced: 0, checked: 0 };
+
+  // Index by RFC Message-Id for O(1) lookup.
+  // PostgREST returns joined relations as arrays even for to-one FKs.
+  type SentRow = { id: string; lead_id: string; to_email: string; message_id: string; leads: { username: string }[] | null };
+  const byMessageId = new Map<string, SentRow>(
+    (sent as unknown as SentRow[])
+      .filter(m => m.message_id)
+      .map(m => [m.message_id, m])
+  );
+
+  // Search Gmail for NDR/bounce messages (inbox only, last 90 days)
+  const ndrIds = await gmailSearch(
+    "from:(mailer-daemon OR postmaster) newer_than:90d",
+    100
+  );
+
+  let bounced = 0;
+  const now = new Date().toISOString();
+
+  for (const gmailId of ndrIds) {
+    const msg = await gmailGetMessage(gmailId);
+    if (!msg?.inReplyTo) continue;
+
+    const match = byMessageId.get(msg.inReplyTo.trim());
+    if (!match) continue;
+
+    await Promise.all([
+      admin
+        .from("outreach_messages")
+        .update({ status: "bounced", bounced_at: now })
+        .eq("id", match.id),
+      admin
+        .from("leads")
+        .update({ email_status: "bounced" })
+        .eq("id", match.lead_id),
+    ]);
+
+    await logCrawl({
+      crawl_job_id: null,
+      profile_username: match.leads?.[0]?.username ?? "",
+      parent_username: null,
+      action: "email_bounced",
+      depth: 0,
+      status: "failure",
+      detail: `Bounce detected for ${match.to_email}`,
+    });
+
+    bounced++;
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, bounced, checked: ndrIds.length };
 }

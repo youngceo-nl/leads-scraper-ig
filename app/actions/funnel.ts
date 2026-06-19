@@ -14,6 +14,23 @@ export type FunnelEnrichResponse = {
   error?: string;
 };
 
+export async function saveEmail(leadId: string, email: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "unauthorized" };
+
+  const trimmed = email.trim();
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("leads")
+    .update({ email: trimmed || null, email_status: trimmed ? "manual" : null })
+    .eq("id", leadId);
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/leads");
+  return { ok: true };
+}
+
 export async function saveProgramName(leadId: string, name: string): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();

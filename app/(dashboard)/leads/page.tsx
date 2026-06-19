@@ -21,6 +21,8 @@ import { ChevronLeft, ChevronRight, ExternalLink, Youtube, Linkedin } from "luci
 import { LeadsActionsMenu } from "@/components/leads/actions-menu";
 import { LeadsSearchBar } from "@/components/leads/search-bar";
 import { ProgramNameCell } from "@/components/leads/program-name-cell";
+import { DoubleClickRow } from "@/components/leads/double-click-row";
+import { LeadEditDialog } from "@/components/leads/lead-edit-dialog";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 50;
@@ -80,12 +82,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     if (sp.has_outreach === "yes") q = q.gt("outreach_count", 0);
     if (sp.has_outreach === "no") q = q.eq("outreach_count", 0);
 
-    const [col, dir] = sortStr.split(".");
-    q = q.order(col, { ascending: dir === "asc", nullsFirst: false });
+    if (sortStr === "uncontacted_score") {
+      // Not contacted first (outreach_count = 0 / null), then score desc within each group
+      q = q.order("outreach_count", { ascending: true, nullsFirst: true });
+      q = q.order("overall_score", { ascending: false, nullsFirst: false });
+    } else {
+      const [col, dir] = sortStr.split(".");
+      q = q.order(col, { ascending: dir === "asc", nullsFirst: false });
+    }
     return q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
   };
 
-  const sort = sp.sort ?? "created_at.desc";
+  const sort = sp.sort ?? "uncontacted_score";
 
   // Fire all independent queries in parallel — previously sequential, causing ~400-800ms of
   // unnecessary wait per page load.
@@ -98,6 +106,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     { count: pendingCount },
     { count: rejectedWithScore },
     { count: backfillCount },
+    { count: qualifiedFunnelCount },
+    { count: bouncedCount },
+    { count: noEmailCount },
   ] = await Promise.all([
     buildQuery(sort, false),
     sb.from("seeds").select("id, username"),
@@ -114,6 +125,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     sb.from("leads").select("id", { count: "exact", head: true })
       .is("followers", null).or("backfill_error.is.null,backfill_error.eq.apify_exhausted")
       .neq("status", "rejected"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("status", "qualified").not("external_link", "is", null),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("email_status", "bounced"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("status", "qualified").is("email", null),
   ]);
 
   const seedMap = new Map((seeds ?? []).map((s) => [s.id, s.username]));
@@ -153,6 +170,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             rejectedWithScore={rejectedWithScore ?? 0}
             missingProgramNames={missingProgramNames ?? 0}
             backfillCount={backfillCount ?? 0}
+            qualifiedFunnelCount={qualifiedFunnelCount ?? 0}
+            bouncedCount={bouncedCount ?? 0}
+            noEmailCount={noEmailCount ?? 0}
             exportHref={exportHref}
           />
         </div>
@@ -205,7 +225,19 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             <TableBody>
               <AnalyzeProvider>
               {(leads ?? []).map((l) => (
-                <TableRow key={l.id} className="align-top">
+                <DoubleClickRow
+                  key={l.id}
+                  className="border-b transition-colors hover:bg-muted/50 align-top"
+                  payload={{
+                    leadId: l.id,
+                    full_name: l.full_name ?? null,
+                    email: l.email ?? null,
+                    niche: l.niche ?? null,
+                    bio: l.bio ?? null,
+                    external_link: l.external_link ?? null,
+                    funnel_program_name: l.funnel_program_name ?? null,
+                  }}
+                >
                   <TableCell className="pt-3"><LeadCheckbox id={l.id} /></TableCell>
                   <TableCell data-col="account">
                     <div className="flex items-center gap-1.5">
@@ -315,7 +347,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       outreachCount={l.outreach_count ?? 0}
                     />
                   </TableCell>
-                </TableRow>
+                </DoubleClickRow>
               ))}
               {(leads ?? []).length === 0 && (
                 <TableRow>
@@ -333,6 +365,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       </SelectionProvider>
 
       <Pagination page={page} totalPages={totalPages} sp={sp} />
+      <LeadEditDialog />
     </div>
   );
 }

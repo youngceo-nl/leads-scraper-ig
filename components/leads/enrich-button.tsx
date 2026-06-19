@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Mail, Loader2, AlertCircle, Check, RefreshCw, Instagram, Globe, Youtube } from "lucide-react";
+import { Mail, Loader2, AlertCircle, Check, RefreshCw, Instagram, Globe, Youtube, X } from "lucide-react";
 import type { EnrichProgress, EnrichStage } from "@/lib/pipeline/enrich-progress";
+import { saveEmail } from "@/app/actions/funnel";
 
 type Props = {
   leadId: string;
@@ -35,6 +36,10 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
   // Live progress of the in-flight run — drives the brand icon + label so the
   // user can see which source we're checking right now.
   const [progress, setProgress] = useState<EnrichProgress | null>(null);
+  const [manual, setManual] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [savePending, startSave] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const onClick = async () => {
     setMessage(null);
@@ -86,6 +91,50 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
     }
   };
 
+  const openManual = () => {
+    setDraft("");
+    setManual(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const commitManual = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || !trimmed.includes("@")) return;
+    startSave(async () => {
+      const r = await saveEmail(leadId, trimmed);
+      if (r.ok) {
+        setEmail(trimmed);
+        setManual(false);
+        router.refresh();
+      }
+    });
+  };
+
+  if (manual) {
+    return (
+      <div className="flex items-center gap-1 min-w-[180px]">
+        <input
+          ref={inputRef}
+          type="email"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitManual();
+            if (e.key === "Escape") setManual(false);
+          }}
+          placeholder="email@example.com"
+          className="h-7 w-full rounded border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <button type="button" onClick={commitManual} disabled={savePending} className="text-green-600 hover:text-green-700 flex-shrink-0">
+          {savePending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+        </button>
+        <button type="button" onClick={() => setManual(false)} className="text-muted-foreground hover:text-foreground flex-shrink-0">
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
+
   if (email) {
     return (
       <a
@@ -106,24 +155,36 @@ export function EnrichButton({ leadId, initialEmail, initialStatus, initialError
 
   return (
     <div className="flex flex-col gap-1 max-w-[230px]">
-      <Button
-        variant="outline"
-        size={size}
-        onClick={onClick}
-        disabled={pending}
-        title={tried ? "Search the public sources again" : "Look up this person's email"}
-      >
-        {pending ? (
-          <StageIcon stage={progress?.stage ?? null} />
-        ) : isError ? (
-          <AlertCircle className="h-3 w-3 mr-1 text-red-600" />
-        ) : tried ? (
-          <RefreshCw className="h-3 w-3 mr-1 text-amber-600" />
-        ) : (
-          <Mail className="h-3 w-3 mr-1" />
+      <div className="group flex items-center gap-1.5">
+        <Button
+          variant="outline"
+          size={size}
+          onClick={onClick}
+          disabled={pending}
+          title={tried ? "Search the public sources again" : "Look up this person's email"}
+        >
+          {pending ? (
+            <StageIcon stage={progress?.stage ?? null} />
+          ) : isError ? (
+            <AlertCircle className="h-3 w-3 mr-1 text-red-600" />
+          ) : tried ? (
+            <RefreshCw className="h-3 w-3 mr-1 text-amber-600" />
+          ) : (
+            <Mail className="h-3 w-3 mr-1" />
+          )}
+          {pending ? (progress?.label ?? "Looking…") : tried ? "Try again" : "Find email"}
+        </Button>
+
+        {tried && !pending && (
+          <button
+            type="button"
+            onClick={openManual}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] text-muted-foreground hover:text-foreground whitespace-nowrap"
+          >
+            or enter manually
+          </button>
         )}
-        {pending ? (progress?.label ?? "Looking…") : tried ? "Try again" : "Find email"}
-      </Button>
+      </div>
 
       {!pending && message && (
         <div className={`text-[11px] leading-snug ${isError ? "text-red-600" : "text-muted-foreground"}`}>

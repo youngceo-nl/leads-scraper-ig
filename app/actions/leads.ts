@@ -13,6 +13,29 @@ async function requireUser() {
   return user;
 }
 
+export type LeadPatch = {
+  full_name?: string | null;
+  email?: string | null;
+  niche?: string | null;
+  bio?: string | null;
+  external_link?: string | null;
+  funnel_program_name?: string | null;
+};
+
+export async function updateLead(leadId: string, patch: LeadPatch): Promise<{ ok: boolean; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+  const clean: LeadPatch = {};
+  for (const [k, v] of Object.entries(patch) as [keyof LeadPatch, string | null | undefined][]) {
+    clean[k] = typeof v === "string" ? (v.trim() || null) : v ?? null;
+  }
+  const { error } = await sb.from("leads").update(clean).eq("id", leadId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/leads");
+  revalidatePath(`/leads`);
+  return { ok: true };
+}
+
 export type AddLeadResult = {
   ok: boolean;
   error?: string;
@@ -215,6 +238,113 @@ export async function retryFunnelEnrichment(
   revalidatePath("/leads");
   revalidatePath("/churn");
   return { ok: true, queued: rows.length, results };
+}
+
+// Fan out funnel enrichment events for ALL qualified leads with an external link,
+// overwriting any existing program name. Use this after updating the LLM prompt.
+export async function rerunFunnelForAllQualified(): Promise<{ ok: boolean; queued: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+  const { data, error } = await sb
+    .from("leads")
+    .select("id, external_link")
+    .eq("status", "qualified")
+    .not("external_link", "is", null);
+  if (error) return { ok: false, queued: 0, error: error.message };
+  const rows = (data ?? []) as Array<{ id: string; external_link: string }>;
+  if (!rows.length) return { ok: true, queued: 0 };
+
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    await inngest.send(
+      chunk.map((r) => ({
+        name: "lead/funnel.enrich.requested" as const,
+        data: { lead_id: r.id, external_link: r.external_link },
+      })),
+    );
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, queued: rows.length };
+}
+
+// Fan out email enrichment for all qualified leads that currently have no email.
+export async function reenrichLeadsWithoutEmail(): Promise<{ ok: boolean; queued: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+
+  const { data, error } = await sb
+    .from("leads")
+    .select("id")
+    .eq("status", "qualified")
+    .is("email", null);
+
+  if (error) return { ok: false, queued: 0, error: error.message };
+  const rows = (data ?? []) as Array<{ id: string }>;
+  if (!rows.length) return { ok: true, queued: 0 };
+
+  const CHUNK = 100;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await inngest.send(
+      rows.slice(i, i + CHUNK).map((r) => ({
+        name: "lead/email.enrich.requested" as const,
+        data: { lead_id: r.id },
+      })),
+    );
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, queued: rows.length };
+}
+
+// Reset bounced leads and re-run the full email enrichment sequence on them.
+// Clears email + email_status so the pipeline skip-guard won't bypass them,
+// then fans out email.enrich.requested events via Inngest.
+export async function reEnrichBouncedLeads(): Promise<{ ok: boolean; queued: number; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+
+  const { data, error } = await sb
+    .from("leads")
+    .select("id")
+    .eq("email_status", "bounced");
+
+  if (error) return { ok: false, queued: 0, error: error.message };
+  const rows = (data ?? []) as Array<{ id: string }>;
+  if (!rows.length) return { ok: true, queued: 0 };
+
+  const ids = rows.map((r) => r.id);
+
+  // Clear the bounced email so the enrichment pipeline runs fresh.
+  // Wipe enrichment_error too so the UI shows a clean slate while re-enriching.
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    await sb
+      .from("leads")
+      .update({
+        email: null,
+        email_status: null,
+        enriched_at: null,
+        enrichment_error: null,
+        outreach_count: 0,
+        last_outreach_at: null,
+        last_outreach_error: null,
+      })
+      .in("id", ids.slice(i, i + CHUNK));
+  }
+
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    await inngest.send(
+      ids.slice(i, i + CHUNK).map((id) => ({
+        name: "lead/email.enrich.requested" as const,
+        data: { lead_id: id },
+      })),
+    );
+  }
+
+  revalidatePath("/leads");
+  return { ok: true, queued: ids.length };
 }
 
 // Fan out score events for all leads that have bio data, bypassing the

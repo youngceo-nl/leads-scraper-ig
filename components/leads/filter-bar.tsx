@@ -175,9 +175,10 @@ export function LeadsFilterBar({ initial }: { initial: State }) {
         </Field>
 
         <Field label="Sort by" className="md:col-span-2">
-          <Select value={staged.sort ?? "overall_score.desc"} onValueChange={v => set("sort", v)}>
+          <Select value={staged.sort ?? "uncontacted_score"} onValueChange={v => set("sort", v)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="uncontacted_score">Score — not contacted first</SelectItem>
               <SelectItem value="overall_score.desc">Score (high → low)</SelectItem>
               <SelectItem value="overall_score.asc">Score (low → high)</SelectItem>
               <SelectItem value="followers.desc">Followers (high → low)</SelectItem>

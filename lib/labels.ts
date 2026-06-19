@@ -16,6 +16,9 @@ const ACTION_LABELS: Record<string, string> = {
   persisted: "Saved",
   email_found: "Email found",
   email_not_found: "No email found",
+  email_sent: "Email sent",
+  email_failed: "Email failed",
+  email_bounced: "Email bounced",
   funnel_found: "Offer found",
   funnel_not_found: "No offer found",
   error: "Error",
@@ -36,6 +39,7 @@ const POSITIVE_ACTIONS = new Set([
   "recursed",
   "persisted",
   "email_found",
+  "email_sent",
   "funnel_found",
 ]);
 

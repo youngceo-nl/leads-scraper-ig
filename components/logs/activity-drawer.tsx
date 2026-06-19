@@ -330,13 +330,17 @@ export function ActivityDrawerButton() {
 function ActiveJobRow({ job }: { job: ActiveJob }) {
   const isPlaywright = job.type === "crawl" && job.scraped === 0 && job.status === "running";
   const pct = job.total > 0 ? Math.min(100, Math.round((job.scraped / job.total) * 100)) : null;
+  const [confirming, setConfirming] = useState(false);
   const [stopping, setStopping] = useState(false);
 
   const handleStop = async () => {
     setStopping(true);
-    if (job.type === "crawl") await cancelCrawl(job.id);
-    else if (job.type === "backfill") await cancelBackfill();
+    try {
+      if (job.type === "crawl") await cancelCrawl(job.id);
+      else if (job.type === "backfill") await cancelBackfill();
+    } catch { /* best-effort */ }
     setStopping(false);
+    setConfirming(false);
   };
 
   return (
@@ -349,14 +353,29 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
             {job.scraped} / {job.total}
           </span>
         )}
-        <button
-          onClick={handleStop}
-          disabled={stopping}
-          className="text-muted-foreground hover:text-destructive transition-colors ml-1 disabled:opacity-40"
-          title="Stop"
-        >
-          {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-        </button>
+        {confirming ? (
+          <div className="flex items-center gap-1 ml-1">
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="text-[10px] font-medium text-destructive hover:underline disabled:opacity-40"
+            >
+              {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : "Stop"}
+            </button>
+            <span className="text-muted-foreground">/</span>
+            <button onClick={() => setConfirming(false)} className="text-[10px] text-muted-foreground hover:text-foreground">
+              Keep
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            className="text-muted-foreground hover:text-destructive transition-colors ml-1"
+            title="Stop"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       {isPlaywright ? (
         <p className="text-[11px] text-muted-foreground pl-5">
@@ -387,12 +406,15 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
     : etaMin < 60 ? `~${Math.round(etaMin)} min`
     : `~${Math.round(etaMin / 60)}h`;
 
+  const [confirming, setConfirming] = useState(false);
   const [stopping, setStopping] = useState(false);
 
   const handleStop = async () => {
     setStopping(true);
-    if (job.type === "backfill") await cancelBackfill();
-    else if (job.crawl_job_id) await cancelCrawl(job.crawl_job_id);
+    try {
+      if (job.type === "backfill") await cancelBackfill();
+      else if (job.crawl_job_id) await cancelCrawl(job.crawl_job_id);
+    } catch { /* best-effort — always dismiss */ }
     onCancel();
   };
 
@@ -402,14 +424,32 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
         <span className="font-medium">{job.label}</span>
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground tabular-nums">{job.done} / {job.total}</span>
-          <button
-            onClick={handleStop}
-            disabled={stopping}
-            className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40"
-            title="Stop"
-          >
-            {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-          </button>
+          {confirming ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleStop}
+                disabled={stopping}
+                className="text-[10px] font-medium text-destructive hover:underline disabled:opacity-40"
+              >
+                {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : "Stop"}
+              </button>
+              <span className="text-muted-foreground">/</span>
+              <button
+                onClick={() => setConfirming(false)}
+                className="text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                Keep
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              className="text-muted-foreground hover:text-destructive transition-colors"
+              title="Stop"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">

@@ -11,11 +11,17 @@ const SYSTEM = `You analyze a marketing landing/funnel page for a B2B outbound t
 Identify the specific NAMED coaching program, course, mastermind, or workshop being sold.
 
 program_name rules — return null unless ALL of these are true:
-- It is a NAMED offer with its own title (e.g. "The 7-Figure Blueprint", "Mastermind 2025")
+- It is a NAMED offer with its own title (e.g. "7-Figure Blueprint", "Optics Academy", "Elite Mastermind")
 - It is NOT just a brand name, store name, personal name, or website name
 - It is NOT a Discord server, community invite, or social media page
 - It is NOT an e-commerce store or generic product listing
 - A person named "Mayhem Optics" selling sunglasses → null. A coach selling "The Optics Academy" → ok.
+
+program_name format:
+- Use the SHORT brand name of the program: 1–3 words preferred, 4 maximum
+- Drop generic filler words: "The", "My", "Our", year suffixes like "2025", tagline phrases
+- Examples: "7-Figure Blueprint" not "The Ultimate 7-Figure Funnel Blueprint System"; "Elite Mastermind" not "Join Our Elite Mastermind Community 2025"
+- If the real name is genuinely short already (e.g. "FBA Academy"), keep it as-is
 
 Output STRICT JSON. Be decisive.`;
 
@@ -102,7 +108,7 @@ PAGE TEXT (truncated):
 ${opts.pageText}
 
 Return JSON with:
-- program_name: the specific NAMED program/course/mastermind/workshop (e.g. "The 7-Figure Funnel Blueprint", "Mastermind 2025"). Return null for e-commerce stores, Discord servers, aggregator pages, personal brand pages, and anything without a distinct named offer.
+- program_name: the SHORT name (1–3 words) of the specific named program/course/mastermind/workshop (e.g. "7-Figure Blueprint", "Elite Mastermind", "FBA Academy"). Strip generic filler ("The", year suffixes, tagline phrases). Return null for e-commerce stores, Discord servers, aggregator pages, personal brand pages, and anything without a distinct named offer.
 - offer_summary: one sentence describing what's being offered and to whom. Null if unclear.
 - price: a price string like "$497", "$997 + $97/mo", "free", or null if no price is visible.
 - confidence: high|medium|low|none — your confidence that program_name is a real named offer (not just a brand/store name).`;

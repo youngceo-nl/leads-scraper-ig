@@ -41,11 +41,18 @@ export function buildLeadContext(opts: {
     username: opts.lead.username,
     niche: opts.lead.niche ?? "",
     business_model: opts.lead.business_model ?? "",
-    program_name: opts.lead.funnel_program_name ?? "",
+    program_name: opts.lead.funnel_program_name || buildFallbackProgramName(opts.lead.niche),
     offer_summary: opts.lead.funnel_offer_summary ?? "",
     external_link: opts.lead.external_link ?? "",
     sender_name: opts.senderName ?? "",
   };
+}
+
+function buildFallbackProgramName(niche: string | null | undefined): string {
+  const topic = niche?.toLowerCase().trim();
+  if (!topic) return "your coaching program";
+  const words = topic.split(/\s+/).slice(0, 2).join(" ");
+  return `your ${words} coaching program`;
 }
 
 // Converts template body (supports lightweight markdown) to HTML for sending.
