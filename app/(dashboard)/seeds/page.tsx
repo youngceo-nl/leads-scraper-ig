@@ -29,11 +29,11 @@ export default async function SeedsPage() {
   // niche (e.g. fitness coaching) dominates the suggestions.
   let candidateQuery = sb
     .from("leads")
-    .select("username, profile_url, followers, overall_score, niche")
+    .select("username, profile_url, followers, following, overall_score, niche")
     .eq("status", "qualified")
     .not("followers", "is", null)
     .not("niche", "is", null)
-    .order("followers", { ascending: false })
+    .order("following", { ascending: false })
     .limit(200);
   if (existingUsernames.length > 0) {
     candidateQuery = candidateQuery.not("username", "in", `(${existingUsernames.join(",")})`);

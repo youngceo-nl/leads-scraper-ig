@@ -22,6 +22,7 @@ export type ManagedAccount = {
   last_error: string | null;
   checkpoint_state: CheckpointState | null;
   proxy_url: string | null; // dedicated residential proxy for this account, e.g. http://user:pass@host:port
+  group?: string | null;  // rotation group label, e.g. "A", "B" — only the active group is scraped
 };
 
 // Sent to client components — includes credentials since this is a self-hosted tool.
@@ -76,7 +77,11 @@ export type AppSettings = {
   gmail_oauth_email: string | null;
   capsolver_api_key: string | null;
   hunter_api_key: string | null;
+  findymail_api_keys: string[];
+  prospeo_api_keys: string[];
   instagram_proxy_url: string | null;
+  active_account_group: string | null; // which group is currently active for scraping; null = use all
+  instagram_proxy_pool: string[];      // shared IP pool — assigned by slot position to accounts in active group
   yt_google_cookie: string | null;
   yt_google_cookies: string[];
   // Credentials for auto-refreshing the YouTube cookie (see lib/youtube/refresh-cookie.ts)

@@ -59,7 +59,7 @@ type Events = {
   };
   "outreach/batch.requested": {
     data: {
-      lead_ids: string[];
+      leads: { id: string; subject: string; body: string }[];
       interval_minutes?: number;
     };
   };

@@ -1,6 +1,8 @@
 import { inngest } from "@/inngest/client";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getSettings } from "@/lib/config/settings";
 import { gmailReady } from "@/lib/outreach/gmail";
+import { buildLeadContext, renderTemplate, extractFirstName } from "@/lib/outreach/template";
 
 const DAILY_SEND_TARGET = 25;
 const INTERVAL_MINUTES = 20;
@@ -14,12 +16,13 @@ export const dailySend = inngest.createFunction(
     const ready = await step.run("check-gmail", () => gmailReady());
     if (!ready) return { skipped: "Gmail not connected" };
 
+    const settings = await step.run("load-settings", () => getSettings());
     const sb = createAdminClient();
 
     const leads = await step.run("pick-leads", async () => {
       const { data } = await sb
         .from("leads")
-        .select("id")
+        .select("id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link")
         .in("status", ["qualified", "review"])
         .not("email", "is", null)
         .neq("email_status", "bounced")
@@ -31,14 +34,25 @@ export const dailySend = inngest.createFunction(
 
     if (!leads.length) return { skipped: "no leads ready to send" };
 
-    await step.sendEvent("queue-batch", {
-      name: "outreach/batch.requested",
-      data: {
-        lead_ids: leads.map((l) => l.id),
-        interval_minutes: INTERVAL_MINUTES,
-      },
+    // Render templates now so the send function uses consistent content
+    // (same as the manual preview flow — skips leads with no valid first name)
+    const rendered = leads.flatMap((lead) => {
+      if (!extractFirstName(lead.full_name as string | null)) return [];
+      const ctx = buildLeadContext({ lead, senderName: settings.gmail_from_name ?? null });
+      return [{
+        id: lead.id as string,
+        subject: renderTemplate(settings.outreach_subject_template, ctx),
+        body: renderTemplate(settings.outreach_body_template, ctx),
+      }];
     });
 
-    return { queued: leads.length, interval_minutes: INTERVAL_MINUTES };
+    if (!rendered.length) return { skipped: "all leads blocked — no valid first names" };
+
+    await step.sendEvent("queue-batch", {
+      name: "outreach/batch.requested",
+      data: { leads: rendered, interval_minutes: INTERVAL_MINUTES },
+    });
+
+    return { queued: rendered.length, interval_minutes: INTERVAL_MINUTES };
   },
 );

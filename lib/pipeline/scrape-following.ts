@@ -43,26 +43,36 @@ export async function scrapeFollowingDetailedWithFallback(opts: {
         const r = await fetchFollowingDirect({ username, sessionCookie: entry.cookie, limit, startCursor: opts.startCursor });
         return { items: r.items, provider: "cookie" as const, nextCursor: r.nextCursor };
       } catch (err) {
-        if (err instanceof InstagramDirectError && err.status === 429) {
-          markRateLimited(entry.cookie);
+        if (err instanceof InstagramDirectError) {
+          if (err.status === 429) markRateLimited(entry.cookie);
+          // Try next cookie regardless — 401 = expired, 403 = flagged, etc.
           lastErr = err;
           continue;
         }
         throw err;
       }
     }
-    throw lastErr ?? new Error("All Instagram cookies rate-limited");
+    throw lastErr ?? new Error("All Instagram cookies exhausted");
   };
 
-  // Try Playwright first (hard 5-min cap), fall back to direct cookie
+  // Try Playwright first (hard 5-min cap), fall back to direct cookie.
+  // If Playwright returns 0 items (silent fail — dialog didn't open, UI changed, etc.)
+  // treat it the same as an error and try the cookie path.
   const PLAYWRIGHT_TIMEOUT_MS = 5 * 60 * 1000;
   try {
-    return await Promise.race([
+    const r = await Promise.race([
       tryPlaywright(),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Playwright timed out after 5 minutes")), PLAYWRIGHT_TIMEOUT_MS)
       ),
     ]);
+    if (r.items.length > 0) return r;
+    await logError({
+      context: "playwright.following.fallback",
+      error_message: "Playwright returned 0 items, falling back to cookie",
+      payload: { username },
+      crawl_job_id: opts.crawl_job_id ?? null,
+    });
   } catch (err) {
     await logError({
       context: "playwright.following.fallback",

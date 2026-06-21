@@ -1,12 +1,14 @@
 "use client";
 import { useTransition, useState } from "react";
-import { CheckCircle2, XCircle, AlertTriangle, MinusCircle, RefreshCw, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, MinusCircle, RefreshCw, Trash2, Eye, EyeOff, Copy, Check, Layers, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { useRouter } from "next/navigation";
-import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie, setManagedAccountCookie, setManagedAccountProxy, setManagedAccountPassword } from "@/app/actions/settings";
+import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie, setManagedAccountCookie, setManagedAccountProxy, setManagedAccountPassword, setManagedAccountGroup, setActiveAccountGroup, setProxyPool } from "@/app/actions/settings";
 import type { ManagedAccountDisplay } from "@/lib/types";
 
 function relativeTime(iso: string | null): string {
@@ -72,6 +74,8 @@ function AccountCard({
   const [cookieError, setCookieError] = useState<string | null>(null);
   const [proxyDraft, setProxyDraft] = useState(account.proxy_url ?? "");
   const [savingProxy, setSavingProxy] = useState(false);
+  const [groupDraft, setGroupDraft] = useState(account.group ?? "");
+  const [savingGroup, setSavingGroup] = useState(false);
   const [passwordDraft, setPasswordDraft] = useState(account.password ?? "");
   const [totpDraft, setTotpDraft] = useState(account.totp_secret ?? "");
   const [savingPassword, setSavingPassword] = useState(false);
@@ -161,6 +165,11 @@ function AccountCard({
             </span>
           )}
           <span className={`text-xs ${color} shrink-0`}>{text}</span>
+          {account.group && (
+            <Badge variant="outline" className="text-xs px-1.5 py-0 h-4 shrink-0">
+              {account.group}
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground shrink-0">
             · refreshed {relativeTime(account.cookie_set_at)}
           </span>
@@ -293,7 +302,7 @@ function AccountCard({
             <Input
               value={proxyDraft}
               onChange={(e) => setProxyDraft(e.target.value)}
-              placeholder="Proxy: http://user:pass@host:port (optional)"
+              placeholder="Proxy: http://user:pass@host:port (optional, overrides pool slot)"
               className="h-7 text-xs flex-1 font-mono"
             />
             <Button
@@ -310,6 +319,35 @@ function AccountCard({
               }}
             >
               {savingProxy ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        )}
+
+        {/* Rotation group — only the active group is used for scraping */}
+        {platform === "instagram" && (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Group</span>
+            <Input
+              value={groupDraft}
+              onChange={(e) => setGroupDraft(e.target.value.toUpperCase().slice(0, 4))}
+              placeholder="A, B, C… (leave blank = ungrouped)"
+              className="h-7 text-xs w-24"
+              maxLength={4}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              disabled={savingGroup || groupDraft === (account.group ?? "")}
+              onClick={async () => {
+                setSavingGroup(true);
+                await setManagedAccountGroup(platform, account.id, groupDraft || null);
+                setSavingGroup(false);
+                router.refresh();
+              }}
+            >
+              {savingGroup ? "Saving…" : "Save"}
             </Button>
           </div>
         )}
@@ -434,15 +472,23 @@ function AccountCard({
 export function ManagedAccountManager({
   platform,
   accounts,
+  activeGroup: initialActiveGroup = null,
+  proxyPool: initialProxyPool = [],
   onPendingDelete,
 }: {
   platform: "instagram" | "youtube";
   accounts: ManagedAccountDisplay[];
+  activeGroup?: string | null;
+  proxyPool?: string[];
   onPendingDelete?: (id: string) => void;
 }) {
   const isIg = platform === "instagram";
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+  const [activeGroup, setActiveGroupState] = useState<string | null>(initialActiveGroup);
+  const [switchingGroup, startSwitchGroup] = useTransition();
+  const [proxyPoolDraft, setProxyPoolDraft] = useState(() => initialProxyPool.join("\n"));
+  const [savingPool, startSavePool] = useTransition();
 
   type TestAllResult = { ok: boolean; message: string };
   const [testingAllId, setTestingAllId] = useState<string | null>(null);
@@ -539,8 +585,113 @@ export function ManagedAccountManager({
   const visibleAccounts = accounts.filter((a) => !pendingDeleteIds.has(a.id));
   const isTesting = testingAllId !== null;
 
+  // Derive groups from current accounts
+  const groupNames = isIg
+    ? [...new Set(accounts.map((a) => a.group?.trim()).filter(Boolean) as string[])].sort()
+    : [];
+
+  const handleSwitchGroup = (group: string | null) => {
+    startSwitchGroup(async () => {
+      await setActiveAccountGroup(group);
+      setActiveGroupState(group);
+      router.refresh();
+    });
+  };
+
+  const handleSavePool = () => {
+    startSavePool(async () => {
+      const lines = proxyPoolDraft.split("\n").map((l) => l.trim()).filter(Boolean);
+      await setProxyPool(lines);
+      router.refresh();
+    });
+  };
+
   return (
     <div className="space-y-3">
+      {/* Group rotation panel — only shown for Instagram when groups exist */}
+      {isIg && groupNames.length > 0 && (
+        <div className="rounded-md border p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium">Rotation groups</span>
+            {activeGroup ? (
+              <Badge className="text-xs h-4 px-1.5 py-0">Group {activeGroup} active</Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">All accounts active (no group filter)</span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {groupNames.map((g) => {
+              const isActive = activeGroup === g;
+              const count = accounts.filter((a) => a.group === g).length;
+              return (
+                <button
+                  key={g}
+                  type="button"
+                  disabled={switchingGroup}
+                  onClick={() => handleSwitchGroup(isActive ? null : g)}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    isActive
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-card hover:bg-accent text-foreground"
+                  }`}
+                >
+                  {isActive && <Zap className="h-3 w-3" />}
+                  Group {g}
+                  <span className={`text-[10px] ${isActive ? "opacity-70" : "text-muted-foreground"}`}>
+                    {count} account{count !== 1 ? "s" : ""}
+                  </span>
+                </button>
+              );
+            })}
+            {activeGroup && (
+              <button
+                type="button"
+                disabled={switchingGroup}
+                onClick={() => handleSwitchGroup(null)}
+                className="inline-flex items-center rounded-md border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+              >
+                Use all
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Click a group to activate it — only those accounts will be used for scraping. Click again to deactivate.
+          </p>
+        </div>
+      )}
+
+      {/* IP proxy pool */}
+      {isIg && (
+        <div className="rounded-md border p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium">IP pool</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                One proxy per line. Assigned by slot position to accounts in the active group — slot 1 → account 1, slot 2 → account 2, etc. Overridden by a per-account proxy set above.
+              </p>
+            </div>
+          </div>
+          <Textarea
+            value={proxyPoolDraft}
+            onChange={(e) => setProxyPoolDraft(e.target.value)}
+            placeholder={"http://user:pass@ip1:port\nhttp://user:pass@ip2:port\nhttp://user:pass@ip3:port"}
+            className="font-mono text-xs min-h-[80px] resize-y"
+            rows={3}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            disabled={savingPool}
+            onClick={handleSavePool}
+          >
+            {savingPool ? "Saving…" : "Save IP pool"}
+          </Button>
+        </div>
+      )}
+
       {/* Header row with Test all button */}
       {isIg && visibleAccounts.length > 0 && (
         <div className="flex items-center justify-between">

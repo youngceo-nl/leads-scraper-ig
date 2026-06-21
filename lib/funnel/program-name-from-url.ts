@@ -47,6 +47,22 @@ export function extractProgramNameFromUrl(rawUrl: string): string | null {
     return null;
   }
 
+  // Brand TLDs: the TLD is part of the name and should be kept as a word
+  // e.g. "travelpreneur.university" → "Travelpreneur University"
+  const BRAND_TLDS: Record<string, string> = {
+    ".university": "University",
+    ".education": "Education",
+    ".institute": "Institute",
+    ".media": "Media",
+    ".studio": "Studio",
+  };
+  for (const [tld, word] of Object.entries(BRAND_TLDS)) {
+    if (hostname.endsWith(tld)) {
+      const stem = hostname.slice(0, -tld.length);
+      if (stem) return `${stem.includes("-") ? slugToTitle(stem) : splitCamelCase(stem)} ${word}`;
+    }
+  }
+
   // Personal domain: strip TLD(s) and format
   let name = hostname;
   // Strip common TLDs (multi-word first to avoid partial matches)

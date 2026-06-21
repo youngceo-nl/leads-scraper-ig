@@ -2,7 +2,7 @@ import { inngest } from "@/inngest/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/config/settings";
 import { sendEmail, gmailReady } from "@/lib/outreach/gmail";
-import { renderTemplate, buildLeadContext, textToHtml } from "@/lib/outreach/template";
+import { textToHtml } from "@/lib/outreach/template";
 import { logCrawl } from "@/lib/pipeline/persist";
 
 export const sendOutreachBatch = inngest.createFunction(
@@ -14,12 +14,12 @@ export const sendOutreachBatch = inngest.createFunction(
   },
   { event: "outreach/batch.requested" },
   async ({ event, step }) => {
-    const { lead_ids, interval_minutes = 20 } = event.data as {
-      lead_ids: string[];
+    const { leads: leadPayloads, interval_minutes = 20 } = event.data as {
+      leads: { id: string; subject: string; body: string }[];
       interval_minutes?: number;
     };
 
-    if (!lead_ids?.length) return { sent: 0, failed: 0 };
+    if (!leadPayloads?.length) return { sent: 0, failed: 0 };
 
     const ready = await step.run("check-gmail", () => gmailReady());
     if (!ready) throw new Error("Gmail not connected — connect it in Settings → Outreach.");
@@ -30,21 +30,21 @@ export const sendOutreachBatch = inngest.createFunction(
     let sent = 0;
     let failed = 0;
 
-    for (let i = 0; i < lead_ids.length; i++) {
-      const lead_id = lead_ids[i];
+    for (let i = 0; i < leadPayloads.length; i++) {
+      const { id: lead_id, subject, body: bodyText } = leadPayloads[i];
 
       const result = await step.run(`send-${i}`, async () => {
         const { data: lead } = await admin
           .from("leads")
-          .select("id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, email, outreach_count")
+          .select("id, username, full_name, email, outreach_count")
           .eq("id", lead_id)
           .single();
 
         if (!lead?.email) return { ok: false, reason: "no_email" };
 
-        const ctx = buildLeadContext({ lead, senderName: process.env.GMAIL_FROM_NAME ?? null });
-        const subject = renderTemplate(settings.outreach_subject_template, ctx);
-        const bodyText = renderTemplate(settings.outreach_body_template, ctx);
+        // Guard: skip if already contacted (prevents double-send if queued twice)
+        if ((lead.outreach_count ?? 0) > 0) return { ok: false, reason: "already_sent" };
+
         const bodyHtml = textToHtml(bodyText);
 
         try {
@@ -79,7 +79,7 @@ export const sendOutreachBatch = inngest.createFunction(
             parent_username: null,
             action: "email_sent",
             depth: 0,
-            detail: `To: ${lead.email} · Subject: ${subject} (batch ${i + 1}/${lead_ids.length})`,
+            detail: `To: ${lead.email} · Subject: ${subject} (batch ${i + 1}/${leadPayloads.length})`,
           });
 
           return { ok: true };
@@ -115,11 +115,11 @@ export const sendOutreachBatch = inngest.createFunction(
       if (result.ok) sent++; else failed++;
 
       // Sleep between sends — skip after the last one
-      if (i < lead_ids.length - 1) {
+      if (i < leadPayloads.length - 1) {
         await step.sleep(`wait-${i}`, `${interval_minutes}m`);
       }
     }
 
-    return { sent, failed, total: lead_ids.length };
+    return { sent, failed, total: leadPayloads.length };
   },
 );

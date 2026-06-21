@@ -12,21 +12,34 @@ export type FunnelExtraction = {
 const BAD_TITLES = new Set([
   "", "home", "welcome", "untitled", "sign in", "log in", "login",
   "page not found", "404", "loading...", "loading",
+  // Opt-in / funnel page titles that tell us nothing about the program
+  "opt in", "opt-in", "optin", "free training", "free masterclass",
+  "register", "register now", "sign up", "sign up now",
+  "watch now", "watch video", "free video", "instant access",
+  "apply now", "book a call", "schedule a call", "get access",
 ]);
 
 // Returns true if the string is clearly NOT a program/offer name.
 function isJunk(s: string): boolean {
   // Social aggregator titles: "@handle | Instagram, YouTube..."
   if (/^\s*@/.test(s)) return true;
-  // "X | Instagram" / "X | Linktree" etc.
-  if (/\|\s*(instagram|youtube|tiktok|twitter|facebook|snapchat|linktree|stan|beacons|whop)/i.test(s)) return true;
+  // Any pipe separator means this is a compound page title, not a clean program name
+  // e.g. "Fortune Consulting | Welcome", "Calls Into Listings | Live Event | Hosted by..."
+  if (/\s\|\s/.test(s)) return true;
   // Discord / community invites
   if (/^join\s+/i.test(s)) return true;
   if (/\bdiscord\b.*\b(server|community|invite)\b/i.test(s)) return true;
   // All-lowercase no-space strings — usernames masquerading as names
   if (/^[a-z][a-z0-9]{2,}$/.test(s)) return true;
-  // Sentence fragments — too long (>80 chars) or contains sentence punctuation
-  if (s.length > 80) return true;
+  // Marketing copy embedded in video/product titles
+  if (/\b(FULL COURSE|FREE TRAINING|LIVE EVENT|HOSTED BY|WEBINAR|REGISTER NOW|SIGN UP NOW)\b/i.test(s)) return true;
+  // Anything over 50 chars is a page title / sentence fragment, not a program name
+  if (s.length > 50) return true;
+  // More than 5 words → sentence/headline, not a program name
+  // Real program names are 2–4 words: "High Ticket Closer", "Freedom Architect"
+  if (s.split(/\s+/).length > 5) return true;
+  // Sentence-style CTA / blog-post starters that are never real program names
+  if (/^(how to |how i |learn how |welcome to )/i.test(s)) return true;
   return false;
 }
 
@@ -49,7 +62,8 @@ export function extractFunnel(opts: { html: string; platform: string }): FunnelE
   const good_enough =
     !!program_name &&
     program_name.length >= 5 &&
-    program_name.length <= 120 &&
+    program_name.length <= 50 &&
+    !/\s\|\s/.test(program_name) &&
     !BAD_TITLES.has(program_name.toLowerCase());
 
   return { program_name, offer_summary, price, raw_text_for_llm, good_enough };

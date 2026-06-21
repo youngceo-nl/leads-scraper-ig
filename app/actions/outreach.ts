@@ -26,7 +26,7 @@ async function loadLeadAndSettings(leadId: string) {
   const admin = createAdminClient();
   const { data: lead, error } = await admin
     .from("leads")
-    .select("id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, email")
+    .select("id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, email, outreach_count")
     .eq("id", leadId)
     .single();
   if (error || !lead) throw new Error(error?.message ?? `Lead ${leadId} not found`);
@@ -65,6 +65,12 @@ export async function sendOutreach(opts: {
   }
 
   const { settings, lead } = await loadLeadAndSettings(opts.leadId);
+
+  // Hard guard: never send twice regardless of how the request was triggered
+  if ((lead.outreach_count ?? 0) > 0) {
+    return { ok: false, error: "Already sent to this lead." };
+  }
+
   const ctx = buildLeadContext({ lead, senderName: process.env.GMAIL_FROM_NAME ?? null });
 
   const to = (opts.to?.trim() || lead.email || "").trim();
@@ -155,7 +161,33 @@ export async function sendOutreach(opts: {
   }
 }
 
+// Batch send with pre-rendered content (from the outreach preview page).
 export async function sendOutreachBatch(opts: {
+  leads: { id: string; subject: string; body: string }[];
+  intervalMinutes?: number;
+}): Promise<{ ok: boolean; queued: number; error?: string }> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, queued: 0, error: "unauthorized" };
+
+  if (!(await gmailReady())) {
+    return { ok: false, queued: 0, error: "Gmail not connected — set up OAuth in Settings → Outreach." };
+  }
+
+  const leads = opts.leads.filter((l) => l.id && l.subject && l.body);
+  if (leads.length === 0) return { ok: true, queued: 0 };
+
+  await inngest.send({
+    name: "outreach/batch.requested",
+    data: { leads, interval_minutes: opts.intervalMinutes ?? 20 },
+  });
+
+  return { ok: true, queued: leads.length };
+}
+
+// Batch send by lead IDs — renders templates server-side.
+// Used by bulk-select on the leads table where there's no preview step.
+export async function sendOutreachBatchByIds(opts: {
   leadIds: string[];
   intervalMinutes?: number;
 }): Promise<{ ok: boolean; queued: number; error?: string }> {
@@ -170,12 +202,30 @@ export async function sendOutreachBatch(opts: {
   const ids = Array.from(new Set(opts.leadIds.filter(Boolean)));
   if (ids.length === 0) return { ok: true, queued: 0 };
 
-  await inngest.send({
-    name: "outreach/batch.requested",
-    data: { lead_ids: ids, interval_minutes: opts.intervalMinutes ?? 20 },
+  const settings = await getSettings();
+  const admin = createAdminClient();
+  const { data: rows } = await admin
+    .from("leads")
+    .select("id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link")
+    .in("id", ids);
+
+  const leads = (rows ?? []).map((lead) => {
+    const ctx = buildLeadContext({ lead, senderName: settings.gmail_from_name ?? null });
+    return {
+      id: lead.id as string,
+      subject: renderTemplate(settings.outreach_subject_template, ctx),
+      body: renderTemplate(settings.outreach_body_template, ctx),
+    };
   });
 
-  return { ok: true, queued: ids.length };
+  if (leads.length === 0) return { ok: true, queued: 0 };
+
+  await inngest.send({
+    name: "outreach/batch.requested",
+    data: { leads, interval_minutes: opts.intervalMinutes ?? 20 },
+  });
+
+  return { ok: true, queued: leads.length };
 }
 
 export type CheckBouncesResult = {

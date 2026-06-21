@@ -22,17 +22,27 @@ export function buildCookiePool(settings: AppSettings): PoolEntry[] {
   const seen = new Set<string>();
   const pool: PoolEntry[] = [];
 
-  // Managed accounts — carry their per-account proxy if set
-  for (const a of settings.instagram_accounts ?? []) {
+  // When a group is active, restrict to accounts in that group only.
+  // Accounts with no group set are included when no group is active.
+  const activeGroup = settings.active_account_group?.trim() || null;
+  const proxyPool = settings.instagram_proxy_pool ?? [];
+  const globalProxy = settings.instagram_proxy_url?.trim() || process.env.INSTAGRAM_PROXY_URL || null;
+
+  const managedAccounts = (settings.instagram_accounts ?? []).filter((a) => {
+    if (!activeGroup) return true; // no filter
+    return (a.group?.trim() || null) === activeGroup;
+  });
+
+  managedAccounts.forEach((a, slotIndex) => {
     const c = a.cookie?.trim();
-    if (c && !seen.has(c)) {
-      seen.add(c);
-      pool.push({ cookie: c, proxyUrl: a.proxy_url?.trim() || null, accountUsername: a.label ?? null });
-    }
-  }
+    if (!c || seen.has(c)) return;
+    seen.add(c);
+    // Per-account proxy takes priority; fall back to pool slot, then global proxy.
+    const proxyUrl = a.proxy_url?.trim() || proxyPool[slotIndex]?.trim() || globalProxy || null;
+    pool.push({ cookie: c, proxyUrl, accountUsername: a.label ?? null });
+  });
 
   // Legacy multi-cookie list — use global proxy as fallback
-  const globalProxy = settings.instagram_proxy_url?.trim() || process.env.INSTAGRAM_PROXY_URL || null;
   for (const c of settings.instagram_session_cookies ?? []) {
     const t = c.trim();
     if (t && !seen.has(t)) {

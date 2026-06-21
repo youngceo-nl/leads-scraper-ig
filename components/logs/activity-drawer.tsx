@@ -32,6 +32,7 @@ type BulkJob = {
   startedAt: number;
   done: number;
   crawl_job_id?: string;
+  completed?: boolean;
 };
 
 export function ActivityDrawerButton() {
@@ -124,15 +125,22 @@ export function ActivityDrawerButton() {
       } else if (bulkJob.type === "crawl" && bulkJob.crawl_job_id) {
         const p = await getCrawlJobProgress(bulkJob.crawl_job_id);
         done = p.scraped;
-        if (p.total > 0) {
-          setBulkJob((prev) => prev ? { ...prev, total: Math.max(prev.total, p.total), done: Math.max(prev.done, done) } : null);
-          if (p.status === "completed" || p.status === "failed" || p.status === "cancelled") {
-            clearInterval(bulkPollRef.current!);
-            bulkPollRef.current = null;
-            localStorage.removeItem("bulk_job");
-          }
+        const crawlDone = p.status === "completed" || p.status === "failed" || p.status === "cancelled";
+
+        if (crawlDone) {
+          clearInterval(bulkPollRef.current!);
+          bulkPollRef.current = null;
+          // Mark completed so card stays visible with final count until user dismisses
+          saveBulkJob({ ...bulkJob, done: p.scraped, total: Math.max(p.total, p.scraped, 1), completed: true });
           return;
         }
+
+        if (p.total > 0) {
+          // Use actual scraped count as the denominator so 85/85 = 100%, not 85/1000
+          setBulkJob((prev) => prev ? { ...prev, total: p.total, done: Math.max(prev.done, done) } : null);
+          return;
+        }
+        return; // still running, keep polling
       }
       const updated = (prev: BulkJob | null) => prev ? { ...prev, done: Math.max(prev.done, done) } : null;
       setBulkJob((prev) => {
@@ -258,7 +266,7 @@ export function ActivityDrawerButton() {
         )}
 
         {/* Bulk job progress (localStorage-backed) */}
-        {tab === "activity" && bulkJob && bulkJob.done < bulkJob.total && (
+        {tab === "activity" && bulkJob && (bulkJob.completed || bulkJob.done < bulkJob.total) && (
           <BulkProgress job={bulkJob} onCancel={() => saveBulkJob(null)} />
         )}
 
@@ -417,6 +425,22 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
     } catch { /* best-effort — always dismiss */ }
     onCancel();
   };
+
+  if (job.completed) {
+    return (
+      <div className="px-4 py-3 border-b bg-muted/30 shrink-0">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium">{job.label}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-green-600 font-medium">{job.done} found — done</span>
+            <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 py-3 border-b bg-muted/30 shrink-0 space-y-2">

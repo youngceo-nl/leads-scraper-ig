@@ -200,11 +200,14 @@ function extractFromPage(
 function sanitizeProgramName(name: string | null): string | null {
   if (!name) return null;
   const s = name.trim();
-  if (s.length < 3 || s.length > 100) return null;
+  if (s.length < 3 || s.length > 50) return null;
   if (/^\s*@/.test(s)) return null;
-  if (/\|\s*(instagram|youtube|tiktok|twitter|facebook|snapchat|linktree|stan|beacons|whop)/i.test(s)) return null;
+  // Any pipe separator means a compound page title, not a clean program name
+  if (/\s\|\s/.test(s)) return null;
   if (/^join\s+/i.test(s)) return null;
   if (/\bdiscord\b.*\b(server|community|invite)\b/i.test(s)) return null;
+  // Marketing copy embedded in titles
+  if (/\b(FULL COURSE|FREE TRAINING|LIVE EVENT|HOSTED BY|WEBINAR|REGISTER NOW|SIGN UP NOW)\b/i.test(s)) return null;
   // Pure lowercase no-space string → just a username/handle
   if (/^[a-z][a-z0-9]{2,}$/.test(s)) return null;
   return s;

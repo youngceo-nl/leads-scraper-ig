@@ -142,7 +142,9 @@ export const crawlSeed = inngest.createFunction(
           .single();
         const current: string[] = seed?.exhausted_providers ?? [];
         let updated: string[];
-        if (totalNew === 0 && !cursor) {
+        // Only mark as exhausted if we actually fetched accounts but none were new.
+        // totalScraped===0 means the API returned nothing (network/bug), not that the list is empty.
+        if (totalScraped > 0 && totalNew === 0 && !cursor) {
           updated = current.includes("cookie") ? current : [...current, "cookie"];
         } else {
           updated = current.filter((p) => p !== "cookie");

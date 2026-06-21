@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, Users, Settings, Sprout, LogOut, Gauge, CreditCard, Inbox, ArchiveX, Activity } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Sprout, LogOut, Gauge, CreditCard, Inbox, ArchiveX, Activity, Send } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ActivityDrawerButton } from "@/components/logs/activity-drawer";
@@ -8,6 +8,7 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/seeds", label: "Source Accounts", icon: Sprout },
   { href: "/leads", label: "Leads", icon: Users },
+  { href: "/outreach", label: "Outreach", icon: Send },
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/logs", label: "Pipeline", icon: Activity },
   { href: "/usage", label: "Usage", icon: Gauge },

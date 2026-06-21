@@ -10,6 +10,9 @@ import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured, checkYoutubeCookie
 import { extractEmailFromText } from "@/lib/leads/email-extract";
 import { inferEmailFromDomain, extractDomain } from "@/lib/email/domain-inference";
 import { findEmailWithHunter } from "@/lib/email/hunter";
+import { findEmailWithFindymail } from "@/lib/email/findymail";
+import { findEmailWithProspeo } from "@/lib/email/prospeo";
+import { pickKey, markRateLimited, markQuotaExhausted, isQuotaReason } from "@/lib/email/key-pool";
 import type { EnrichProgress } from "@/lib/pipeline/enrich-progress";
 
 export type EnrichPipelineResult = {
@@ -18,7 +21,7 @@ export type EnrichPipelineResult = {
   youtube_url: string | null;
   email: string | null;
   email_status: string;
-  source: "cached" | "ig_bio" | "website" | "youtube" | "domain_inference" | "hunter" | "skipped";
+  source: "cached" | "ig_bio" | "website" | "youtube" | "domain_inference" | "hunter" | "findymail" | "prospeo" | "skipped";
   // User-facing summary of what happened when no email was found.
   error: string | null;
   // Full step-by-step trace, surfaced behind a "details" affordance in the UI.
@@ -237,20 +240,29 @@ export async function enrichLeadPipeline(opts: {
     steps.push("yt_cookie_scrape: skipped (no channel found)");
   }
 
-  // ── Step 3: domain + name via Hunter.io, then free DNS pattern guess. ───────
-  // Hunter (first + last name + domain) gives verified business addresses and
-  // is far less likely to bounce than scraping generic contact pages.
+  // ── Step 3: email finder waterfall — Hunter → Findymail → Prospeo → domain inference ──
+  // Each paid provider runs only when its key is configured. Domain inference
+  // (free DNS pattern guess) is always the last resort.
   {
     const hunterKey = settings.hunter_api_key || process.env.HUNTER_API_KEY || "";
+    const findymailKeys = [
+      ...(settings.findymail_api_keys ?? []),
+      ...(process.env.FINDYMAIL_API_KEY ? [process.env.FINDYMAIL_API_KEY] : []),
+    ].filter(Boolean);
+    const prospeoKeys = [
+      ...(settings.prospeo_api_keys ?? []),
+      ...(process.env.PROSPEO_API_KEY ? [process.env.PROSPEO_API_KEY] : []),
+    ].filter(Boolean);
     const domain = extractDomain(externalLink ?? funnelUrl);
 
     if (domain) {
-      emit({ stage: "domain_inference", state: "start", label: hunterKey ? "Hunter.io…" : "Domain lookup…" });
+      emit({ stage: "domain_inference", state: "start", label: "Email finder…" });
 
       let inferredEmail: string | null = null;
-      let inferSource: "hunter" | "domain_inference" = "domain_inference";
+      let inferSource: "hunter" | "findymail" | "prospeo" | "domain_inference" = "domain_inference";
 
-      if (hunterKey) {
+      // 3a. Hunter.io (single key — paid, not rotated)
+      if (!inferredEmail && hunterKey) {
         const r = await findEmailWithHunter({ apiKey: hunterKey, domain, fullName });
         if (r.email) {
           inferredEmail = r.email;
@@ -259,8 +271,55 @@ export async function enrichLeadPipeline(opts: {
         } else {
           steps.push(`hunter: ${"reason" in r ? r.reason : "no_email"}`);
         }
+      } else if (!hunterKey) {
+        steps.push("hunter: skipped (no key)");
       }
 
+      // 3b. Findymail — rotate through free-tier account pool
+      if (!inferredEmail && findymailKeys.length > 0) {
+        const key = pickKey("findymail", findymailKeys);
+        if (key) {
+          const r = await findEmailWithFindymail({ apiKey: key, domain, fullName });
+          if (r.email) {
+            inferredEmail = r.email;
+            inferSource = "findymail";
+            steps.push(`findymail: ${r.email}`);
+          } else {
+            const reason = "reason" in r ? r.reason : "no_email";
+            if (reason === "rate_limited") markRateLimited("findymail", key);
+            else if (isQuotaReason(reason)) markQuotaExhausted("findymail", key);
+            steps.push(`findymail: ${reason}`);
+          }
+        } else {
+          steps.push("findymail: skipped (all keys exhausted)");
+        }
+      } else if (!findymailKeys.length) {
+        steps.push("findymail: skipped (no keys)");
+      }
+
+      // 3c. Prospeo — rotate through free-tier account pool
+      if (!inferredEmail && prospeoKeys.length > 0) {
+        const key = pickKey("prospeo", prospeoKeys);
+        if (key) {
+          const r = await findEmailWithProspeo({ apiKey: key, domain, fullName });
+          if (r.email) {
+            inferredEmail = r.email;
+            inferSource = "prospeo";
+            steps.push(`prospeo: ${r.email}`);
+          } else {
+            const reason = "reason" in r ? r.reason : "no_email";
+            if (reason === "rate_limited") markRateLimited("prospeo", key);
+            else if (isQuotaReason(reason)) markQuotaExhausted("prospeo", key);
+            steps.push(`prospeo: ${reason}`);
+          }
+        } else {
+          steps.push("prospeo: skipped (all keys exhausted)");
+        }
+      } else if (!prospeoKeys.length) {
+        steps.push("prospeo: skipped (no keys)");
+      }
+
+      // 3d. Free DNS pattern guess — always last
       if (!inferredEmail) {
         const r = await inferEmailFromDomain({ externalLink: externalLink ?? funnelUrl, fullName });
         if (r.email) {
@@ -272,7 +331,13 @@ export async function enrichLeadPipeline(opts: {
       }
 
       if (inferredEmail) {
-        emit({ stage: "domain_inference", state: "hit", label: hunterKey ? "Found via Hunter" : "Inferred from domain" });
+        const providerLabel: Record<typeof inferSource, string> = {
+          hunter: "Found via Hunter",
+          findymail: "Found via Findymail",
+          prospeo: "Found via Prospeo",
+          domain_inference: "Inferred from domain",
+        };
+        emit({ stage: "domain_inference", state: "hit", label: providerLabel[inferSource] });
         return persistAndReturn({
           leadId: opts.leadId,
           patch: {
@@ -306,8 +371,10 @@ export async function enrichLeadPipeline(opts: {
   // what to configure so the user can act on it.
   const checked: string[] = ["the Instagram bio"];
   if (youtubeUrl) checked.push("their YouTube About page");
-  if (steps.some((s) => s.startsWith("hunter:"))) checked.push("Hunter.io");
-  else if (steps.some((s) => s.startsWith("domain_inference:"))) checked.push("domain pattern lookup");
+  if (steps.some((s) => s.startsWith("hunter:") && !s.includes("skipped"))) checked.push("Hunter.io");
+  if (steps.some((s) => s.startsWith("findymail:") && !s.includes("skipped"))) checked.push("Findymail");
+  if (steps.some((s) => s.startsWith("prospeo:") && !s.includes("skipped"))) checked.push("Prospeo");
+  if (steps.some((s) => s.startsWith("domain_inference:") && !s.includes("skipped"))) checked.push("domain pattern lookup");
 
   // Surface the most actionable problem first. A blocked/misconfigured lookup
   // is far more useful to the user than a generic "nothing found".

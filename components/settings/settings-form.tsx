@@ -11,6 +11,7 @@ import { AlertTriangle } from "lucide-react";
 import { saveSettings, removeManagedAccount } from "@/app/actions/settings";
 import { YtCookieManager } from "@/components/settings/yt-cookie-manager";
 import { ManagedAccountManager } from "@/components/settings/managed-account-manager";
+import { EmailKeyManager } from "@/components/settings/email-key-manager";
 import { BodyEditor } from "@/components/settings/body-editor";
 import type { AppSettings, ManagedAccountDisplay } from "@/lib/types";
 import type { CookieLiveness } from "@/lib/youtube/refresh-cookie";
@@ -25,6 +26,8 @@ export function SettingsForm({
   ytCookieLiveness?: CookieLiveness[];
   igAccounts?: ManagedAccountDisplay[];
   ytAccounts?: ManagedAccountDisplay[];
+  activeAccountGroup?: string | null;
+  instagramProxyPool?: string[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -92,7 +95,17 @@ export function SettingsForm({
             <Field label="Claude model" name="claude_model" defaultValue={initial.claude_model} hint="e.g. claude-opus-4-7, claude-sonnet-4-6" />
             <Separator />
             <Field label="CapSolver API key" name="capsolver_api_key" defaultValue={initial.capsolver_api_key ?? ""} type="password" hint="Solves reCAPTCHA when revealing gated business emails on YouTube. Falls back to CAPSOLVER_API_KEY env var." />
-            <Field label="Hunter.io API key (optional)" name="hunter_api_key" defaultValue={initial.hunter_api_key ?? ""} type="password" hint="Domain + name email lookup. Free tier: 25 searches/month. Falls back to HUNTER_API_KEY env var. Leave blank to use our free DNS-based inference instead." />
+            <Field label="Hunter.io API key (optional)" name="hunter_api_key" defaultValue={initial.hunter_api_key ?? ""} type="password" hint="Domain + name email lookup. Paid — single key. Falls back to HUNTER_API_KEY env var." />
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Findymail API keys</Label>
+              <p className="text-xs text-muted-foreground">Email finder fallback after Hunter. Add multiple free-tier accounts — keys rotate round-robin and are skipped when their monthly quota runs out.</p>
+              <EmailKeyManager provider="findymail" keys={initial.findymail_api_keys ?? []} placeholder="fm_live_…" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Prospeo API keys</Label>
+              <p className="text-xs text-muted-foreground">Email finder fallback after Findymail. Free tier: 75 searches/month per account. Stack accounts to multiply free quota.</p>
+              <EmailKeyManager provider="prospeo" keys={initial.prospeo_api_keys ?? []} placeholder="prospeo_…" />
+            </div>
             <Field label="Instagram proxy URL (optional)" name="instagram_proxy_url" defaultValue={initial.instagram_proxy_url ?? ""} hint="Rotating proxy for Instagram scraping. Format: http://user:pass@host:port — only used as fallback when a 429 rate-limit is hit. Falls back to INSTAGRAM_PROXY_URL env var." />
           </CardContent>
         </Card>
@@ -105,7 +118,14 @@ export function SettingsForm({
               <p className="text-xs text-muted-foreground">
                 Add Instagram accounts with their session cookie. The scraper rotates between accounts automatically when one gets rate-limited.
               </p>
-              <ManagedAccountManager key={igResetKey} platform="instagram" accounts={igAccounts} onPendingDelete={(id) => addPendingDelete("instagram", id)} />
+              <ManagedAccountManager
+                key={igResetKey}
+                platform="instagram"
+                accounts={igAccounts}
+                activeGroup={initial.active_account_group ?? null}
+                proxyPool={initial.instagram_proxy_pool ?? []}
+                onPendingDelete={(id) => addPendingDelete("instagram", id)}
+              />
             </div>
             <Separator />
             <div className="space-y-2">

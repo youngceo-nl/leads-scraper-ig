@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2, Loader2, AlertCircle, Mail, Check } from "lucide-react";
 import { deleteLeads } from "@/app/actions/leads";
 import { enrichLeadsBulk } from "@/app/actions/enrich";
-import { sendOutreachBatch } from "@/app/actions/outreach";
+import { sendOutreachBatchByIds } from "@/app/actions/outreach";
 
 type Ctx = {
   allIds: string[];
@@ -148,7 +148,7 @@ export function BulkDeleteBar() {
     setError(null);
     setNotice(null);
     startSend(async () => {
-      const r = await sendOutreachBatch({ leadIds: ids, intervalMinutes: 20 });
+      const r = await sendOutreachBatchByIds({ leadIds: ids, intervalMinutes: 20 });
       if (r.ok) {
         setNotice(`Queued ${r.queued} email${r.queued === 1 ? "" : "s"} — sending over ~${hrs}h.`);
         clear();

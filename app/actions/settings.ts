@@ -141,6 +141,30 @@ export async function removeYtCookie(index: number) {
   revalidatePath("/settings");
 }
 
+export async function addEmailProviderKey(provider: "findymail" | "prospeo", key: string) {
+  await requireUser();
+  const settings = await getSettings(true);
+  const trimmed = key.trim();
+  if (!trimmed) return { error: "Key is empty" };
+  const field = provider === "findymail" ? "findymail_api_keys" : "prospeo_api_keys";
+  const keys: string[] = (settings[field] as string[]) ?? [];
+  if (keys.includes(trimmed)) return { error: "Key already added" };
+  await updateSettings({ [field]: [...keys, trimmed] });
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function removeEmailProviderKey(provider: "findymail" | "prospeo", index: number) {
+  await requireUser();
+  const settings = await getSettings(true);
+  const field = provider === "findymail" ? "findymail_api_keys" : "prospeo_api_keys";
+  const keys = [...((settings[field] as string[]) ?? [])];
+  if (index < 0 || index >= keys.length) return;
+  keys.splice(index, 1);
+  await updateSettings({ [field]: keys });
+  revalidatePath("/settings");
+}
+
 export async function refreshYtCookieNow(creds?: {
   email?: string;
   password?: string;
@@ -478,6 +502,29 @@ export async function setManagedAccountProxy(platform: Platform, id: string, pro
   const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
   const updated = accounts.map((a) => a.id === id ? { ...a, proxy_url: proxyUrl.trim() || null } : a);
   await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+}
+
+export async function setManagedAccountGroup(platform: Platform, id: string, group: string | null): Promise<void> {
+  await requireUser();
+  const settings = await getSettings(true);
+  const key = accountsKey(platform);
+  const accounts: ManagedAccount[] = (settings[key] as ManagedAccount[]) ?? [];
+  const updated = accounts.map((a) => a.id === id ? { ...a, group: group?.trim() || null } : a);
+  await updateSettings({ [key]: updated } as Partial<AppSettings>);
+  revalidatePath("/settings");
+}
+
+export async function setActiveAccountGroup(group: string | null): Promise<void> {
+  await requireUser();
+  await updateSettings({ active_account_group: group?.trim() || null });
+  revalidatePath("/settings");
+}
+
+export async function setProxyPool(proxies: string[]): Promise<void> {
+  await requireUser();
+  const cleaned = proxies.map((p) => p.trim()).filter(Boolean);
+  await updateSettings({ instagram_proxy_pool: cleaned });
   revalidatePath("/settings");
 }
 

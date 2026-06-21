@@ -8,6 +8,7 @@ type SuggestedSeed = {
   username: string;
   profile_url: string;
   followers: number | null;
+  following: number | null;
   overall_score: number | null;
   niche: string | null;
 };
@@ -77,8 +78,11 @@ export function SuggestedSeeds({ candidates }: { candidates: SuggestedSeed[] }) 
               </div>
               <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                 {c.niche && <span>{c.niche}</span>}
-                {c.niche && c.followers && <span>·</span>}
-                {c.followers != null && <span>{fmt(c.followers)} followers</span>}
+                <span>·</span>
+                {c.following != null
+                  ? <span className="font-medium text-foreground">{fmt(c.following)} following</span>
+                  : <span>? following</span>}
+                {c.followers != null && <><span>·</span><span>{fmt(c.followers)} followers</span></>}
               </div>
             </div>
 
