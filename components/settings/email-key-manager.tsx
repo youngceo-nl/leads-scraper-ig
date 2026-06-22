@@ -15,7 +15,7 @@ export function EmailKeyManager({
   keys,
   placeholder,
 }: {
-  provider: "findymail" | "prospeo";
+  provider: "findymail" | "prospeo" | "scrapingbee";
   keys: string[];
   placeholder?: string;
 }) {

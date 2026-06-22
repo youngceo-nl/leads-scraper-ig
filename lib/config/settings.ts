@@ -54,3 +54,21 @@ export function resolveClaudeKey(s: AppSettings): string {
   if (!k) throw new Error("ANTHROPIC_API_KEY not configured (set in Settings or env)");
   return k;
 }
+
+// Returns all configured ScrapingBee keys for rotation.
+// SCRAPINGBEE_API_KEYS (comma-separated) > SCRAPINGBEE_API_KEY (single) > DB key.
+export function resolveScrapingBeeKeys(s: AppSettings): string[] {
+  const fromEnv = (process.env.SCRAPINGBEE_API_KEYS ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+  const single = process.env.SCRAPINGBEE_API_KEY?.trim();
+  if (single && !fromEnv.includes(single)) fromEnv.push(single);
+  for (const k of s.scrapingbee_api_keys ?? []) {
+    const t = k.trim();
+    if (t && !fromEnv.includes(t)) fromEnv.push(t);
+  }
+  const dbKey = s.scrapingbee_api_key?.trim();
+  if (dbKey && !fromEnv.includes(dbKey)) fromEnv.push(dbKey);
+  return fromEnv;
+}

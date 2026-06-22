@@ -78,7 +78,11 @@ export function SettingsForm({
           <CardHeader><CardTitle>API keys</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Field label="Apify API key (optional)" name="apify_api_key" defaultValue={initial.apify_api_key ?? ""} type="password" hint="Falls back to APIFY_TOKEN env var if blank." />
-            <Field label="ScrapingBee API key" name="scrapingbee_api_key" defaultValue={initial.scrapingbee_api_key ?? ""} type="password" hint="Falls back to SCRAPINGBEE_API_KEY env var if blank." />
+            <div className="space-y-1">
+              <Label className="text-sm">ScrapingBee API keys</Label>
+              <p className="text-xs text-muted-foreground">Add multiple accounts to rotate credits. Falls back to SCRAPINGBEE_API_KEY env var.</p>
+              <EmailKeyManager provider="scrapingbee" keys={initial.scrapingbee_api_keys ?? []} placeholder="SB API key…" />
+            </div>
             <Field label="Serper.dev API key" name="serper_api_key" defaultValue={initial.serper_api_key ?? ""} type="password" hint="Google Search API used to find LinkedIn/YouTube profiles. Falls back to SERPER_API_KEY env var." />
 
             <div className="space-y-1 pt-2">

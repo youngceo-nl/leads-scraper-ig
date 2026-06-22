@@ -144,12 +144,12 @@ export async function removeYtCookie(index: number) {
   revalidatePath("/settings");
 }
 
-export async function addEmailProviderKey(provider: "findymail" | "prospeo", key: string) {
+export async function addEmailProviderKey(provider: "findymail" | "prospeo" | "scrapingbee", key: string) {
   await requireUser();
   const settings = await getSettings(true);
   const trimmed = key.trim();
   if (!trimmed) return { error: "Key is empty" };
-  const field = provider === "findymail" ? "findymail_api_keys" : "prospeo_api_keys";
+  const field = provider === "findymail" ? "findymail_api_keys" : provider === "prospeo" ? "prospeo_api_keys" : "scrapingbee_api_keys";
   const keys: string[] = (settings[field] as string[]) ?? [];
   if (keys.includes(trimmed)) return { error: "Key already added" };
   await updateSettings({ [field]: [...keys, trimmed] });
@@ -157,10 +157,10 @@ export async function addEmailProviderKey(provider: "findymail" | "prospeo", key
   return { ok: true };
 }
 
-export async function removeEmailProviderKey(provider: "findymail" | "prospeo", index: number) {
+export async function removeEmailProviderKey(provider: "findymail" | "prospeo" | "scrapingbee", index: number) {
   await requireUser();
   const settings = await getSettings(true);
-  const field = provider === "findymail" ? "findymail_api_keys" : "prospeo_api_keys";
+  const field = provider === "findymail" ? "findymail_api_keys" : provider === "prospeo" ? "prospeo_api_keys" : "scrapingbee_api_keys";
   const keys = [...((settings[field] as string[]) ?? [])];
   if (index < 0 || index >= keys.length) return;
   keys.splice(index, 1);

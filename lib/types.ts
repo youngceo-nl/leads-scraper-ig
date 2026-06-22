@@ -79,6 +79,7 @@ export type AppSettings = {
   hunter_api_key: string | null;
   findymail_api_keys: string[];
   prospeo_api_keys: string[];
+  scrapingbee_api_keys: string[];
   zerobounce_api_key: string | null;
   neverbounce_api_key: string | null;
   instagram_proxy_url: string | null;

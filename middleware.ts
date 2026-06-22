@@ -24,7 +24,10 @@ export async function middleware(req: NextRequest) {
   const url = req.nextUrl;
 
   const isAuthRoute = url.pathname.startsWith("/login");
-  const isPublicApi = url.pathname.startsWith("/api/inngest");
+  const isPublicApi =
+    url.pathname.startsWith("/api/inngest") ||
+    url.pathname.startsWith("/api/telegram") ||
+    url.pathname.startsWith("/api/manual-lead");
 
   if (!user && !isAuthRoute && !isPublicApi) {
     const redirect = url.clone();
