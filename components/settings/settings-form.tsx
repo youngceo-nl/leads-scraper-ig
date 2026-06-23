@@ -77,7 +77,11 @@ export function SettingsForm({
         <Card>
           <CardHeader><CardTitle>API keys</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <Field label="Apify API key (optional)" name="apify_api_key" defaultValue={initial.apify_api_key ?? ""} type="password" hint="Falls back to APIFY_TOKEN env var if blank." />
+            <div className="space-y-1">
+              <Label className="text-sm">Apify API keys</Label>
+              <p className="text-xs text-muted-foreground">Add multiple accounts to rotate monthly free credits. Falls back to APIFY_TOKENS / APIFY_TOKEN env var.</p>
+              <EmailKeyManager provider="apify" keys={initial.apify_api_keys ?? []} placeholder="apify_api_…" showLabel />
+            </div>
             <div className="space-y-1">
               <Label className="text-sm">ScrapingBee API keys</Label>
               <p className="text-xs text-muted-foreground">Add multiple accounts to rotate credits. Falls back to SCRAPINGBEE_API_KEY env var.</p>

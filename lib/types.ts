@@ -43,6 +43,7 @@ export type RecentPost = {
 export type AppSettings = {
   id: 1;
   apify_api_key: string | null;
+  apify_api_keys: string[];
   claude_api_key: string | null;
   claude_model: string;
   scrapingbee_api_key: string | null;

@@ -1,8 +1,6 @@
 import "server-only";
-import { getSettings, resolveScrapingBeeKeys } from "@/lib/config/settings";
-import { pickKey, markQuotaExhausted, markRateLimited } from "@/lib/email/key-pool";
-import { scrapeProfileWithPostsViaScrapingBee } from "@/lib/scrapingbee/instagram";
-import { ScrapingBeeError } from "@/lib/scrapingbee/client";
+import { getSettings, resolveApifyTokens } from "@/lib/config/settings";
+import { scrapeProfiles, scrapePosts } from "@/lib/apify/actors";
 import { classifyWithOpenAi } from "@/lib/openai/classify";
 import { computeMetrics } from "@/lib/pipeline/metrics";
 import { computeScores } from "@/lib/scoring/compute";
@@ -18,24 +16,22 @@ export async function analyzeIgLead(input: string): Promise<ManualLeadResult> {
   if (!username) return { ok: false, username: input, error: "Could not parse username from input" };
 
   const settings = await getSettings();
-  const keys = resolveScrapingBeeKeys(settings);
-  const apiKey = pickKey("scrapingbee", keys);
-  if (!apiKey) return { ok: false, username, error: "No ScrapingBee API keys available (all exhausted)" };
+  const tokens = resolveApifyTokens(settings);
+  if (!tokens.length) return { ok: false, username, error: "No Apify token configured — add one in Settings or set APIFY_TOKEN env var" };
 
+  // Scrape profile + posts in parallel — use first available token for posts (runActorSync doesn't rotate)
   let profile: ScrapedProfile;
   try {
-    const result = await scrapeProfileWithPostsViaScrapingBee({ apiKey, username });
-    if (!result) return { ok: false, username, error: "Profile not found or is private" };
-    profile = result;
+    const [profiles, postsMap] = await Promise.all([
+      scrapeProfiles({ token: tokens[0], usernames: [username] }),
+      scrapePosts({ token: tokens[0], usernames: [username], limit: 12 }),
+    ]);
+
+    const raw = profiles[0];
+    if (!raw) return { ok: false, username, error: "Profile not found — account may be private or username incorrect" };
+
+    profile = { ...raw, recent_posts: postsMap.get(username) ?? [] };
   } catch (err) {
-    if (err instanceof ScrapingBeeError) {
-      const msg = err.message.toLowerCase();
-      if (msg.includes("quota") || msg.includes("credit") || msg.includes("plan_limit")) {
-        markQuotaExhausted("scrapingbee", apiKey);
-      } else if (err.status === 429) {
-        markRateLimited("scrapingbee", apiKey);
-      }
-    }
     return { ok: false, username, error: err instanceof Error ? err.message : String(err) };
   }
 

@@ -27,6 +27,12 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
   return cached.value;
 }
 
+// Strips an optional "label|||" prefix from a stored key entry.
+function extractKey(raw: string): string {
+  const idx = raw.indexOf("|||");
+  return idx === -1 ? raw : raw.slice(idx + 3);
+}
+
 // Resolve a key from DB first, env var as fallback.
 // Apify is OPTIONAL — required only if `following_scraper_provider` is "apify"
 // or "auto" without ScrapingBee configured.
@@ -41,12 +47,14 @@ export function resolveApifyTokens(s: AppSettings): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+  const single = process.env.APIFY_TOKEN?.trim();
+  if (single && !fromEnv.includes(single)) fromEnv.push(single);
+  for (const k of s.apify_api_keys ?? []) {
+    const t = extractKey(k.trim());
+    if (t && !fromEnv.includes(t)) fromEnv.push(t);
+  }
   const fallback = s.apify_api_key?.trim();
   if (fallback && !fromEnv.includes(fallback)) fromEnv.push(fallback);
-  if (fromEnv.length === 0) {
-    const single = process.env.APIFY_TOKEN?.trim();
-    if (single) fromEnv.push(single);
-  }
   return fromEnv;
 }
 export function resolveClaudeKey(s: AppSettings): string {
@@ -65,7 +73,7 @@ export function resolveScrapingBeeKeys(s: AppSettings): string[] {
   const single = process.env.SCRAPINGBEE_API_KEY?.trim();
   if (single && !fromEnv.includes(single)) fromEnv.push(single);
   for (const k of s.scrapingbee_api_keys ?? []) {
-    const t = k.trim();
+    const t = extractKey(k.trim());
     if (t && !fromEnv.includes(t)) fromEnv.push(t);
   }
   const dbKey = s.scrapingbee_api_key?.trim();
