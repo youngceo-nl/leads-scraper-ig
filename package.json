@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && eslint . && rm -rf .next && next build",
     "inngest:dev": "inngest dev -u http://localhost:3000/api/inngest",
-    "db:push": "supabase db push"
+    "db:push": "supabase db push",
+    "worker": "npm --prefix worker run dev",
+    "worker:loom-login": "npm --prefix worker run upload-to-loom:login"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

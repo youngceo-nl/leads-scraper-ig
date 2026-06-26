@@ -1,0 +1,10 @@
+{
+  "firstName": "Alex",
+  "companyName": "Growth Academy",
+  "hookAudioPath": "http://127.0.0.1:8765/sample-hook.mp3",
+  "screenAssetPath": "http://127.0.0.1:8765/sample-screen.png",
+  "ctaText": "I recorded a quick idea for your funnel",
+  "brandColor": "#286833",
+  "hookDurationInFrames": 240,
+  "durationInFrames": 240
+}

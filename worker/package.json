@@ -1,0 +1,27 @@
+{
+  "name": "outreach-video-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "upload-to-loom:login": "tsx src/services/uploadToLoom.ts --login",
+    "upload-to-loom:test": "tsx src/services/uploadToLoom.ts --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@remotion/bundler": "4.0.482",
+    "@remotion/renderer": "4.0.482",
+    "@supabase/supabase-js": "^2.46.1",
+    "dotenv": "^17.4.2",
+    "openai": "^4.77.0",
+    "playwright": "^1.61.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.0"
+  }
+}

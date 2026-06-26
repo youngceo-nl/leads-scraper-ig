@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { formatNumber, formatPct, scoreColor } from "@/lib/utils";
 import { actionLabel, statusLabel } from "@/lib/labels";
-import type { Lead, RecentPost } from "@/lib/types";
+import type { Lead, RecentPost, VideoJob } from "@/lib/types";
 import { NotesSection } from "@/components/leads/notes-section";
 import { EnrichButton } from "@/components/leads/enrich-button";
 import { SendEmailButton } from "@/components/leads/send-email-button";
 import { FunnelCard } from "@/components/leads/funnel-card";
+import { VideoOutreachCard } from "@/components/leads/video-outreach-card";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
   const { data: lead } = await sb.from("leads").select("*").eq("username", username.toLowerCase()).single();
   if (!lead) notFound();
 
-  const [{ data: notes }, { data: path }, { data: replies }] = await Promise.all([
+  const [{ data: notes }, { data: path }, { data: replies }, { data: videoJob }] = await Promise.all([
     sb.from("lead_notes").select("*").eq("lead_id", lead.id).order("created_at", { ascending: false }),
     sb
       .from("crawl_logs")
@@ -36,6 +37,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
       .select("id, from_name, from_email, subject, body_text, snippet, received_at")
       .eq("lead_id", lead.id)
       .order("received_at", { ascending: false }),
+    sb
+      .from("video_jobs")
+      .select("id, lead_id, status, hook_script, loom_url, loom_embed_code, error_message, attempt_count, created_at, updated_at")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   const l = lead as Lead;
@@ -144,6 +152,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ use
           funnel_extraction_error: l.funnel_extraction_error,
         }}
       />
+
+      <VideoOutreachCard leadId={l.id} initialJob={(videoJob as VideoJob | null) ?? null} />
 
       {(replies ?? []).length > 0 && (
         <Card>
