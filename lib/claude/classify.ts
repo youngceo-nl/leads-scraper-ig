@@ -27,6 +27,8 @@ Output STRICT JSON only — no prose, no markdown, no code fences.`;
 
 const SCHEMA_HINT = `{
   "niche": string,
+  // course=sells online course/program (even if topic is ecom/crypto); coaching=1:1 or group coaching;
+  // agency=service agency; ecom=runs an online STORE (NOT someone who teaches ecom); saas=software; creator=no paid offer; unknown
   "business_model": "course"|"coaching"|"agency"|"ecom"|"saas"|"creator"|"unknown",
   "offer_type": string,
   "audience_type": string,

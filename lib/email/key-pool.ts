@@ -53,3 +53,7 @@ const QUOTA_REASONS = ["quota_exceeded", "credits_exhausted", "plan_limit", "ins
 export function isQuotaReason(reason: string): boolean {
   return QUOTA_REASONS.some((r) => reason.toLowerCase().includes(r));
 }
+
+export function isInvalidKeyReason(reason: string): boolean {
+  return reason === "invalid_api_key";
+}

@@ -556,6 +556,114 @@ export async function setGroupPaused(platform: Platform, group: string, paused: 
   revalidatePath("/settings");
 }
 
+// ── Email provider key status ─────────────────────────────────────────────────
+
+function emailKeyStatusId(provider: string, key: string) {
+  return `${provider}:${key.slice(-12)}`;
+}
+
+// Called from the enrich pipeline (fire-and-forget) when a key is quota-exhausted.
+export async function persistKeyExhausted(provider: string, key: string): Promise<void> {
+  try {
+    const settings = await getSettings(true);
+    const statuses = { ...(settings.email_key_statuses ?? {}) };
+    statuses[emailKeyStatusId(provider, key)] = {
+      status: "exhausted",
+      checkedAt: new Date().toISOString(),
+    };
+    await updateSettings({ email_key_statuses: statuses });
+  } catch {
+    // best-effort — never block enrichment
+  }
+}
+
+async function probeKey(provider: "findymail" | "prospeo" | "apify" | "scrapingbee", key: string): Promise<import("@/lib/types").EmailKeyStatus> {
+  const now = new Date().toISOString();
+  try {
+    if (provider === "findymail") {
+      const res = await fetch("https://app.findymail.com/api/credits", {
+        headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 401 || res.status === 403) return { status: "invalid", checkedAt: now };
+      if (!res.ok) return { status: "ok", checkedAt: now }; // unknown state — assume ok
+      const body = await res.json() as { credits?: number; remaining?: number };
+      const credits = body.credits ?? body.remaining ?? null;
+      if (credits !== null && credits <= 0) return { status: "exhausted", credits: 0, checkedAt: now };
+      return { status: "ok", credits: credits ?? undefined, checkedAt: now };
+    }
+
+    if (provider === "prospeo") {
+      // New API: probe with a known LinkedIn URL (free enrichment, no credits spent)
+      const res = await fetch("https://api.prospeo.io/enrich-person", {
+        method: "POST",
+        headers: { "X-KEY": key, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ data: { linkedin_url: "https://www.linkedin.com/in/williamhgates" } }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 401 || res.status === 403) return { status: "invalid", checkedAt: now };
+      if (res.status === 429) return { status: "rate_limited", checkedAt: now };
+      if (!res.ok) return { status: "ok", checkedAt: now };
+      const body = await res.json() as { error: boolean | string; error_code?: string; free_enrichment?: boolean };
+      if (body.error) {
+        const code = String(body.error_code ?? "").toLowerCase();
+        if (code.includes("rate_limit") || code.includes("rate limit")) return { status: "rate_limited", checkedAt: now };
+        if (code.includes("quota") || code.includes("credit")) return { status: "exhausted", checkedAt: now };
+        if (code.includes("qualify") || code.includes("multi-account")) return { status: "invalid", checkedAt: now };
+        // NO_MATCH just means Bill Gates wasn't in their DB for this key's plan — key is still ok
+        if (code === "no_match") return { status: "ok", checkedAt: now };
+        return { status: "invalid", checkedAt: now };
+      }
+      return { status: "ok", checkedAt: now };
+    }
+
+    if (provider === "apify") {
+      const res = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(key)}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 401 || res.status === 403) return { status: "invalid", checkedAt: now };
+      if (!res.ok) return { status: "ok", checkedAt: now };
+      return { status: "ok", checkedAt: now };
+    }
+
+    if (provider === "scrapingbee") {
+      // ScrapingBee has no lightweight status endpoint; validate by fetching usage
+      const res = await fetch(`https://app.scrapingbee.com/api/v1/usage?api_key=${encodeURIComponent(key)}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 401 || res.status === 403) return { status: "invalid", checkedAt: now };
+      if (!res.ok) return { status: "ok", checkedAt: now };
+      const body = await res.json() as { max_api_credit?: number; used_api_credit?: number };
+      const remaining = body.max_api_credit != null && body.used_api_credit != null
+        ? body.max_api_credit - body.used_api_credit
+        : null;
+      if (remaining !== null && remaining <= 0) return { status: "exhausted", credits: 0, checkedAt: now };
+      return { status: "ok", credits: remaining ?? undefined, checkedAt: now };
+    }
+  } catch {
+    // network error — don't clobber existing status
+  }
+  return { status: "ok", checkedAt: now };
+}
+
+export async function checkEmailProviderKey(
+  provider: "findymail" | "prospeo" | "apify" | "scrapingbee",
+  rawKey: string,
+): Promise<import("@/lib/types").EmailKeyStatus> {
+  await requireUser();
+  // rawKey may be "label|||key" — extract just the key part
+  const sepIdx = rawKey.indexOf("|||");
+  const key = sepIdx === -1 ? rawKey : rawKey.slice(sepIdx + 3);
+  const result = await probeKey(provider, key);
+  // Persist
+  const settings = await getSettings(true);
+  const statuses = { ...(settings.email_key_statuses ?? {}) };
+  statuses[emailKeyStatusId(provider, key)] = result;
+  await updateSettings({ email_key_statuses: statuses });
+  revalidatePath("/settings");
+  return result;
+}
+
 export async function setProxyPool(proxies: string[]): Promise<void> {
   await requireUser();
   const cleaned = proxies.map((p) => p.trim()).filter(Boolean);

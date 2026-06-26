@@ -188,11 +188,22 @@ export async function loginAndExtractCookie(
     await clickNext(page, timeoutMs);
     await detectBlock(page, "after email");
 
+    // ── Account picker ──
+    // Google shows a "Choose an account" list when the browser has seen this
+    // account before. Click the matching entry so we reach the password step.
+    await maybeHandleAccountPicker(page, creds.email);
+
     // ── Password ──
-    // Target Google's real field (name="Passwd"); the page also carries a hidden
-    // honeypot input[name="hiddenPassword"] that a bare type=password would hit.
+    // Race: wait for the password field OR a recognisable blocker page.
+    // If neither appears within the timeout, throw with the current URL so the
+    // user knows what Google actually showed instead of a raw Playwright log.
     const pwInput = page.locator('input[name="Passwd"], input[type="password"]:not([aria-hidden="true"])').first();
-    await pwInput.waitFor({ state: "visible", timeout: timeoutMs });
+    const pwVisible = await pwInput.waitFor({ state: "visible", timeout: timeoutMs }).then(() => true).catch(() => false);
+    if (!pwVisible) {
+      const url = page.url();
+      const body = (await page.evaluate(() => document.body?.innerText?.slice(0, 300) ?? "").catch(() => "")) as string;
+      throw new Error(`Google did not show the password field — it may require a phone/SMS verification or showed a challenge we can't pass automatically. Current page: ${url.slice(0, 100)}${body ? ` — "${body.replace(/\s+/g, " ").slice(0, 150)}"` : ""}`);
+    }
     await pwInput.fill(creds.password);
     await clickNext(page, timeoutMs);
     await page.waitForTimeout(2500);
@@ -272,6 +283,26 @@ async function clickNext(page: import("playwright").Page, timeoutMs: number): Pr
 
 // Detect the common dead-ends and fail fast with a clear reason instead of
 // hanging until the step timeout.
+// Handles Google's "Choose an account" picker that appears when the browser
+// has seen the account before. Clicks the matching email entry so the flow
+// continues to the password step as normal.
+async function maybeHandleAccountPicker(page: import("playwright").Page, email: string): Promise<void> {
+  // Wait briefly for either the password field or the account picker to appear.
+  const picker = page.locator(`[data-email="${email}"], [data-identifier="${email}"]`).first();
+  const pickerVisible = await picker.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+  if (pickerVisible) {
+    await picker.click().catch(() => {});
+    await page.waitForTimeout(1500);
+    return;
+  }
+  // Fallback: look for an "Use another account" link and any list item containing the email text
+  const useAnother = page.getByRole("link", { name: /use another account/i }).or(page.getByRole("button", { name: /use another account/i })).first();
+  if ((await useAnother.count()) > 0) {
+    await useAnother.click({ timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+  }
+}
+
 async function detectBlock(page: import("playwright").Page, where: string): Promise<void> {
   const body = (await page.evaluate(() => document.body?.innerText ?? "").catch(() => "")) as string;
   const patterns: Array<[RegExp, string]> = [

@@ -12,7 +12,8 @@ import { inferEmailFromDomain, extractDomain } from "@/lib/email/domain-inferenc
 import { findEmailWithHunter } from "@/lib/email/hunter";
 import { findEmailWithFindymail, findEmailWithFindymailLinkedin } from "@/lib/email/findymail";
 import { findEmailWithProspeo, findEmailWithProspeoLinkedin } from "@/lib/email/prospeo";
-import { pickKey, markRateLimited, markQuotaExhausted, isQuotaReason } from "@/lib/email/key-pool";
+import { pickKey, markRateLimited, markQuotaExhausted, isQuotaReason, isInvalidKeyReason } from "@/lib/email/key-pool";
+import { persistKeyExhausted } from "@/app/actions/settings";
 import { verifyEmail, verifyStatusToEmailStatus } from "@/lib/email/verify";
 import { findLinkedInUrl } from "@/lib/linkedin/find";
 import { extractLinkedInProfileUrl } from "@/lib/linkedin/profile-url";
@@ -311,7 +312,7 @@ export async function enrichLeadPipeline(opts: {
             }
             const reason = "reason" in r ? r.reason : "no_email";
             if (reason === "rate_limited") markRateLimited("prospeo", key);
-            else if (isQuotaReason(reason)) markQuotaExhausted("prospeo", key);
+            else if (isQuotaReason(reason) || isInvalidKeyReason(reason)) { markQuotaExhausted("prospeo", key); void persistKeyExhausted("prospeo", key); }
             steps.push(`li_prospeo: ${reason}`);
           } else {
             steps.push("li_prospeo: skipped (all keys exhausted)");
@@ -333,7 +334,7 @@ export async function enrichLeadPipeline(opts: {
             }
             const reason = "reason" in r ? r.reason : "no_email";
             if (reason === "rate_limited") markRateLimited("findymail", key);
-            else if (isQuotaReason(reason)) markQuotaExhausted("findymail", key);
+            else if (isQuotaReason(reason) || isInvalidKeyReason(reason)) { markQuotaExhausted("findymail", key); void persistKeyExhausted("findymail", key); }
             steps.push(`li_findymail: ${reason}`);
           } else {
             steps.push("li_findymail: skipped (all keys exhausted)");
@@ -396,7 +397,7 @@ export async function enrichLeadPipeline(opts: {
           } else {
             const reason = "reason" in r ? r.reason : "no_email";
             if (reason === "rate_limited") markRateLimited("findymail", key);
-            else if (isQuotaReason(reason)) markQuotaExhausted("findymail", key);
+            else if (isQuotaReason(reason) || isInvalidKeyReason(reason)) { markQuotaExhausted("findymail", key); void persistKeyExhausted("findymail", key); }
             steps.push(`findymail: ${reason}`);
           }
         } else {
@@ -418,7 +419,7 @@ export async function enrichLeadPipeline(opts: {
           } else {
             const reason = "reason" in r ? r.reason : "no_email";
             if (reason === "rate_limited") markRateLimited("prospeo", key);
-            else if (isQuotaReason(reason)) markQuotaExhausted("prospeo", key);
+            else if (isQuotaReason(reason) || isInvalidKeyReason(reason)) { markQuotaExhausted("prospeo", key); void persistKeyExhausted("prospeo", key); }
             steps.push(`prospeo: ${reason}`);
           }
         } else {

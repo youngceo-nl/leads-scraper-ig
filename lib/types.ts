@@ -1,5 +1,11 @@
 // Shared TypeScript types — kept thin and aligned with the SQL schema.
 
+export type EmailKeyStatus = {
+  status: "ok" | "exhausted" | "invalid" | "rate_limited";
+  credits?: number | null;
+  checkedAt: string; // ISO
+};
+
 export type LeadStatus = "qualified" | "review" | "rejected" | "pending";
 
 // A cookie account managed by the system: credentials are stored so the auto-
@@ -100,6 +106,8 @@ export type AppSettings = {
   backfill_cancel_requested: boolean;
   backfill_started_at: string | null;
   updated_at: string;
+  // Per-key status cache: key is "provider:last12chars", value is last check result
+  email_key_statuses: Record<string, EmailKeyStatus>;
 };
 
 export type Seed = {

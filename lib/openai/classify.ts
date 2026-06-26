@@ -75,6 +75,13 @@ ${captions || "(none)"}
 Fields to return:
 - niche: short phrase like "fitness coaching", "b2b saas", "beauty ecom"
 - business_model: course / coaching / agency / ecom / saas / creator / unknown
+    • course = sells an online course or program (even if the TOPIC is ecom, crypto, etc.)
+    • coaching = sells 1:1 or group coaching / consulting
+    • agency = runs a service agency (SMMA, marketing, etc.)
+    • ecom = runs an online STORE selling physical or digital products (NOT someone who teaches ecom)
+    • saas = sells software
+    • creator = content creator with no clear paid offer
+    • unknown = cannot determine
 - offer_type: brief e.g. "$497 course", "free lead magnet", "DTC skincare", "1:1 coaching", "unknown"
 - audience_type: who they serve, 1 line
 - has_visible_offer: true ONLY if bio or captions clearly advertise a paid offer / product / service

@@ -80,12 +80,12 @@ export function SettingsForm({
             <div className="space-y-1">
               <Label className="text-sm">Apify API keys</Label>
               <p className="text-xs text-muted-foreground">Add multiple accounts to rotate monthly free credits. Falls back to APIFY_TOKENS / APIFY_TOKEN env var.</p>
-              <EmailKeyManager provider="apify" keys={initial.apify_api_keys ?? []} placeholder="apify_api_…" showLabel />
+              <EmailKeyManager provider="apify" keys={initial.apify_api_keys ?? []} placeholder="apify_api_…" showLabel keyStatuses={initial.email_key_statuses ?? {}} />
             </div>
             <div className="space-y-1">
               <Label className="text-sm">ScrapingBee API keys</Label>
               <p className="text-xs text-muted-foreground">Add multiple accounts to rotate credits. Falls back to SCRAPINGBEE_API_KEY env var.</p>
-              <EmailKeyManager provider="scrapingbee" keys={initial.scrapingbee_api_keys ?? []} placeholder="SB API key…" />
+              <EmailKeyManager provider="scrapingbee" keys={initial.scrapingbee_api_keys ?? []} placeholder="SB API key…" keyStatuses={initial.email_key_statuses ?? {}} />
             </div>
             <Field label="Serper.dev API key" name="serper_api_key" defaultValue={initial.serper_api_key ?? ""} type="password" hint="Google Search API used to find LinkedIn/YouTube profiles. Falls back to SERPER_API_KEY env var." />
 
@@ -108,12 +108,12 @@ export function SettingsForm({
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">Findymail API keys</Label>
               <p className="text-xs text-muted-foreground">Email finder fallback after Hunter. Add multiple free-tier accounts — keys rotate round-robin and are skipped when their monthly quota runs out.</p>
-              <EmailKeyManager provider="findymail" keys={initial.findymail_api_keys ?? []} placeholder="fm_live_…" />
+              <EmailKeyManager provider="findymail" keys={initial.findymail_api_keys ?? []} placeholder="fm_live_…" showLabel keyStatuses={initial.email_key_statuses ?? {}} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">Prospeo API keys</Label>
               <p className="text-xs text-muted-foreground">Email finder fallback after Findymail. Free tier: 75 searches/month per account. Stack accounts to multiply free quota.</p>
-              <EmailKeyManager provider="prospeo" keys={initial.prospeo_api_keys ?? []} placeholder="prospeo_…" />
+              <EmailKeyManager provider="prospeo" keys={initial.prospeo_api_keys ?? []} placeholder="prospeo_…" showLabel keyStatuses={initial.email_key_statuses ?? {}} />
             </div>
             <Separator />
             <Field label="Zerobounce API key (optional)" name="zerobounce_api_key" defaultValue={initial.zerobounce_api_key ?? ""} type="password" hint="Verifies found emails before saving — reduces bounce rates. Falls back to ZEROBOUNCE_API_KEY env var." />

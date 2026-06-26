@@ -64,7 +64,8 @@ export function AccountCard({
 }) {
   const isCheckpoint = !!account.checkpoint_state || !!account.last_error?.includes("verification code");
   const { color, text, Icon } = statusLabel(account);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!account.cookie || !!account.last_error);
+  const [ytCookieDraft, setYtCookieDraft] = useState(account.cookie ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [code, setCode] = useState("");
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -254,7 +255,7 @@ export function AccountCard({
             onClick={() => setExpanded((v) => !v)}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            <span>{platform === "instagram" ? "Session cookie" : "Google cookie"}</span>
+            <span>{platform === "instagram" ? "Session cookie" : "YouTube cookie"}</span>
             <span className="text-muted-foreground/60">{expanded ? "▲" : "▼"}</span>
           </button>
           {account.cookie && expanded && <CopyButton value={account.cookie} />}
@@ -282,29 +283,47 @@ export function AccountCard({
                 ))}
               </>
             ) : (
-              <textarea
-                value={assembleCookie()}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setSessionId(v);
-                  setCookieError(null);
-                }}
-                placeholder="Paste full cookie string"
-                rows={3}
-                className="w-full font-mono text-xs text-foreground/80 bg-background border rounded-md px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              />
+              <>
+                <p className="text-[11px] text-muted-foreground">
+                  In YouTube, open DevTools → Network → click any <code>youtube.com</code> request → copy the <code>Cookie</code> request header value and paste it below.
+                </p>
+                <textarea
+                  value={ytCookieDraft}
+                  onChange={(e) => { setYtCookieDraft(e.target.value); setCookieError(null); }}
+                  placeholder="SID=...; HSID=...; SSID=...; (full Cookie header)"
+                  rows={4}
+                  className="w-full font-mono text-xs text-foreground/80 bg-background border rounded-md px-2 py-1.5 resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </>
             )}
             {cookieError && <p className="text-xs text-destructive">{cookieError}</p>}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs"
-              disabled={savingCookie || !cookieChanged}
-              onClick={handleSaveCookie}
-            >
-              {savingCookie ? "Saving…" : "Save cookie"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                disabled={savingCookie || (platform === "youtube" ? ytCookieDraft === (account.cookie ?? "") : !cookieChanged)}
+                onClick={platform === "youtube" ? async () => {
+                  setSavingCookie(true);
+                  setCookieError(null);
+                  const result = await setManagedAccountCookie("youtube", account.id, ytCookieDraft);
+                  setSavingCookie(false);
+                  if (result.error) setCookieError(result.error);
+                  else { setExpanded(false); router.refresh(); }
+                } : handleSaveCookie}
+              >
+                {savingCookie ? "Saving…" : "Save cookie"}
+              </Button>
+              {platform === "youtube" && ytCookieDraft && ytCookieDraft === (account.cookie ?? "") && (
+                <Button
+                  type="button" size="sm" variant="ghost" disabled={testing}
+                  onClick={handleTest} className="h-7 px-2 text-xs"
+                >
+                  {testing ? "Checking…" : "Test"}
+                </Button>
+              )}
+            </div>
           </div>
         )}
 

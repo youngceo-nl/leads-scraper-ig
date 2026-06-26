@@ -2,35 +2,57 @@ export type ProspeoResult =
   | { email: string }
   | { email: null; reason: string };
 
-// https://prospeo.io — POST /linkedin-email-finder
-// Auth: X-KEY: {key}
-// Body: { url: "https://www.linkedin.com/in/..." }
+// Prospeo migrated from api.prospeo.io/email-finder → api.prospeo.io/enrich-person.
+// New format wraps all person fields in a `data` object; response is at person.email.email.
+
+const ENDPOINT = "https://api.prospeo.io/enrich-person";
+
+function parseResponse(body: ProspeoEnrichResponse): ProspeoResult {
+  if (body.error) {
+    const code = typeof body.error_code === "string" ? body.error_code.toLowerCase() : "";
+    if (code.includes("rate_limit") || code.includes("rate limit")) return { email: null, reason: "rate_limited" };
+    if (code === "no_match" || code === "not_found") return { email: null, reason: "no_email_found" };
+    if (code.includes("quota") || code.includes("credit") || code.includes("limit")) return { email: null, reason: "quota_exceeded" };
+    if (code.includes("qualify") || code.includes("multi-account") || code.includes("upgrade")) return { email: null, reason: "invalid_api_key" };
+    return { email: null, reason: code || "api_error" };
+  }
+  const emailStatus = body.person?.email?.status ?? "";
+  const email = body.person?.email?.email ?? null;
+  if (!email || emailStatus === "UNAVAILABLE") return { email: null, reason: "no_email_found" };
+  return { email };
+}
+
+type ProspeoEnrichResponse = {
+  error: boolean | string;
+  error_code?: string;
+  person?: {
+    email?: {
+      status?: string;
+      email?: string | null;
+    };
+  };
+};
+
 export async function findEmailWithProspeoLinkedin(opts: {
   apiKey: string;
   linkedinUrl: string;
 }): Promise<ProspeoResult> {
   try {
-    const res = await fetch("https://api.prospeo.io/linkedin-email-finder", {
+    const res = await fetch(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-KEY": opts.apiKey },
-      body: JSON.stringify({ url: opts.linkedinUrl }),
+      body: JSON.stringify({ data: { linkedin_url: opts.linkedinUrl } }),
       signal: AbortSignal.timeout(12000),
     });
     if (res.status === 401 || res.status === 403) return { email: null, reason: "invalid_api_key" };
     if (res.status === 429) return { email: null, reason: "rate_limited" };
     if (!res.ok) return { email: null, reason: `http_${res.status}` };
-    const body = await res.json() as { error: boolean; message?: string; response?: { email?: string | null } };
-    if (body.error) return { email: null, reason: body.message ?? "api_error" };
-    const email = body.response?.email ?? null;
-    return email ? { email } : { email: null, reason: "no_email_found" };
+    return parseResponse(await res.json() as ProspeoEnrichResponse);
   } catch (err) {
     return { email: null, reason: err instanceof Error ? err.message.slice(0, 60) : "fetch_error" };
   }
 }
 
-// https://prospeo.io — POST /email-finder
-// Auth: X-KEY: {key}
-// Body: { first_name, last_name, domain }
 export async function findEmailWithProspeo(opts: {
   apiKey: string;
   domain: string;
@@ -47,35 +69,22 @@ export async function findEmailWithProspeo(opts: {
   }
 
   try {
-    const res = await fetch("https://api.prospeo.io/email-finder", {
+    const res = await fetch(ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-KEY": opts.apiKey,
-      },
+      headers: { "Content-Type": "application/json", "X-KEY": opts.apiKey },
       body: JSON.stringify({
-        first_name: parts[0],
-        last_name: parts[parts.length - 1],
-        domain: opts.domain,
+        data: {
+          first_name: parts[0],
+          last_name: parts[parts.length - 1],
+          company_website: opts.domain,
+        },
       }),
       signal: AbortSignal.timeout(10000),
     });
-
     if (res.status === 401 || res.status === 403) return { email: null, reason: "invalid_api_key" };
     if (res.status === 429) return { email: null, reason: "rate_limited" };
     if (!res.ok) return { email: null, reason: `http_${res.status}` };
-
-    const body = await res.json() as {
-      error: boolean;
-      message?: string;
-      response?: { email?: string | null };
-    };
-
-    if (body.error) return { email: null, reason: body.message ?? "api_error" };
-    const email = body.response?.email ?? null;
-    if (!email) return { email: null, reason: "no_email_found" };
-
-    return { email };
+    return parseResponse(await res.json() as ProspeoEnrichResponse);
   } catch (err) {
     return { email: null, reason: err instanceof Error ? err.message.slice(0, 60) : "fetch_error" };
   }
