@@ -11,6 +11,19 @@ import { useRouter } from "next/navigation";
 import { addManagedAccount, refreshManagedAccount, submitCheckpointCode, setManagedAccountEmail, testManagedAccountCookie, setManagedAccountCookie, setManagedAccountProxy, setManagedAccountPassword, setManagedAccountGroup, setActiveAccountGroup, setProxyPool, setManagedAccountPaused, setGroupPaused } from "@/app/actions/settings";
 import type { ManagedAccountDisplay } from "@/lib/types";
 
+// Cookie-Editor exports JSON: [{name, value, ...}, ...] → "name=value; name=value"
+function normalizeCookieInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("[")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { name: string; value: string }[];
+    if (!Array.isArray(parsed)) return trimmed;
+    return parsed.map((c) => `${c.name}=${c.value}`).join("; ");
+  } catch {
+    return trimmed;
+  }
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
   const diff = Date.now() - new Date(iso).getTime();
@@ -220,6 +233,14 @@ export function AccountCard({
                   {testing ? "Checking…" : "Test"}
                 </Button>
               )}
+              {platform === "youtube" && account.cookie && (
+                <Button
+                  type="button" size="sm" variant="ghost" disabled={testing}
+                  onClick={handleTest} className="h-7 px-2 text-xs"
+                >
+                  {testing ? "Checking…" : "Test"}
+                </Button>
+              )}
               {platform === "youtube" && account.password && (
                 <Button
                   type="button" size="sm" variant="ghost" disabled={refreshing}
@@ -285,12 +306,12 @@ export function AccountCard({
             ) : (
               <>
                 <p className="text-[11px] text-muted-foreground">
-                  In YouTube, open DevTools → Network → click any <code>youtube.com</code> request → copy the <code>Cookie</code> request header value and paste it below.
+                  Use Cookie-Editor on YouTube → Export → Export as JSON and paste below, or paste the raw <code>Cookie</code> request header string from DevTools.
                 </p>
                 <textarea
                   value={ytCookieDraft}
                   onChange={(e) => { setYtCookieDraft(e.target.value); setCookieError(null); }}
-                  placeholder="SID=...; HSID=...; SSID=...; (full Cookie header)"
+                  placeholder="Paste Cookie-Editor JSON export or raw Cookie header (SID=...; HSID=...; ...)"
                   rows={4}
                   className="w-full font-mono text-xs text-foreground/80 bg-background border rounded-md px-2 py-1.5 resize-y focus:outline-none focus:ring-1 focus:ring-ring"
                 />
@@ -307,7 +328,7 @@ export function AccountCard({
                 onClick={platform === "youtube" ? async () => {
                   setSavingCookie(true);
                   setCookieError(null);
-                  const result = await setManagedAccountCookie("youtube", account.id, ytCookieDraft);
+                  const result = await setManagedAccountCookie("youtube", account.id, normalizeCookieInput(ytCookieDraft));
                   setSavingCookie(false);
                   if (result.error) setCookieError(result.error);
                   else { setExpanded(false); router.refresh(); }
@@ -315,14 +336,6 @@ export function AccountCard({
               >
                 {savingCookie ? "Saving…" : "Save cookie"}
               </Button>
-              {platform === "youtube" && ytCookieDraft && ytCookieDraft === (account.cookie ?? "") && (
-                <Button
-                  type="button" size="sm" variant="ghost" disabled={testing}
-                  onClick={handleTest} className="h-7 px-2 text-xs"
-                >
-                  {testing ? "Checking…" : "Test"}
-                </Button>
-              )}
             </div>
           </div>
         )}

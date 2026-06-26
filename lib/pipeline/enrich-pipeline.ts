@@ -7,6 +7,7 @@ import { findYouTubeChannelFromPage } from "@/lib/youtube/from-page";
 import { extractYouTubeChannelUrl } from "@/lib/youtube/channel-url";
 import { attemptYoutubeEmail } from "@/lib/youtube/email-from-channel";
 import { refreshAndSaveYoutubeCookie, youtubeLoginConfigured, checkYoutubeCookieLive } from "@/lib/youtube/refresh-cookie";
+import { persistRefreshedYtCookie } from "@/lib/youtube/cookie-jar";
 import { extractEmailFromText } from "@/lib/leads/email-extract";
 import { inferEmailFromDomain, extractDomain } from "@/lib/email/domain-inference";
 import { findEmailWithHunter } from "@/lib/email/hunter";
@@ -257,12 +258,14 @@ export async function enrichLeadPipeline(opts: {
     }
 
     let attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie, capsolverKey, proxy: ytProxy });
+    if (attempt.updatedCookie) void persistRefreshedYtCookie(ytGoogleCookie, attempt.updatedCookie);
     if (attempt.authFailed && youtubeLoginConfigured(settings) && !mintedThisRun) {
       const refreshed = await refreshAndSaveYoutubeCookie();
       if (refreshed.cookie) {
         ytGoogleCookie = refreshed.cookie;
         steps.push("yt_cookie_refresh: ok");
         attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytGoogleCookie, capsolverKey, proxy: ytProxy });
+        if (attempt.updatedCookie) void persistRefreshedYtCookie(ytGoogleCookie, attempt.updatedCookie);
       } else {
         steps.push(`yt_cookie_refresh: ${refreshed.error}`);
       }

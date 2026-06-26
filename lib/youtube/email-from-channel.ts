@@ -14,6 +14,7 @@ export type YtAttempt = {
   trace: string[]; // human-readable step log, appended to the pipeline trace
   youtubeError: string | null;
   authFailed: boolean; // the cookie is logged-out / expired
+  updatedCookie: string | null; // refreshed cookie jar from Google's Set-Cookie headers
 };
 
 // HTTP statuses from the About-page fetch that indicate a dead session rather
@@ -30,17 +31,19 @@ export async function attemptYoutubeEmail(opts: {
   const trace: string[] = [];
 
   if (!googleCookie) {
-    return { email: null, provider: null, trace: ["yt_cookie_scrape: skipped (no YT cookie)"], youtubeError: null, authFailed: false };
+    return { email: null, provider: null, trace: ["yt_cookie_scrape: skipped (no YT cookie)"], youtubeError: null, authFailed: false, updatedCookie: null };
   }
 
   let youtubeError: string | null = null;
   let authFailed = false;
+  let updatedCookie: string | null = null;
 
   // ── Free path: read an email the creator already published on About. ──
   const cookieScrape = await fetchYouTubeAboutWithCookie({ channelUrl, googleCookie });
+  updatedCookie = cookieScrape.updatedCookie;
   if (cookieScrape.email) {
     trace.push("yt_cookie_scrape: found");
-    return { email: cookieScrape.email, provider: "youtube_about", trace, youtubeError: null, authFailed: false };
+    return { email: cookieScrape.email, provider: "youtube_about", trace, youtubeError: null, authFailed: false, updatedCookie };
   }
   trace.push(`yt_cookie_scrape: ${cookieScrape.error ?? "none"}`);
   youtubeError = cookieScrape.error;
@@ -53,7 +56,7 @@ export async function attemptYoutubeEmail(opts: {
       const revealed = await revealYoutubeEmail({ channelUrl, googleCookie, capsolverKey, proxy });
       if (revealed.email) {
         trace.push("yt_capsolver: found");
-        return { email: revealed.email, provider: "youtube_about_gated", trace, youtubeError: null, authFailed: false };
+        return { email: revealed.email, provider: "youtube_about_gated", trace, youtubeError: null, authFailed: false, updatedCookie };
       }
       trace.push(`yt_capsolver: ${revealed.error ?? "none"}`);
       youtubeError = youtubeError ?? revealed.error;
@@ -68,5 +71,5 @@ export async function attemptYoutubeEmail(opts: {
     trace.push("yt_capsolver: skipped (no CapSolver key)");
   }
 
-  return { email: null, provider: null, trace, youtubeError, authFailed };
+  return { email: null, provider: null, trace, youtubeError, authFailed, updatedCookie };
 }

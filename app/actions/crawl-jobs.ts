@@ -33,6 +33,7 @@ export type ActiveJob = {
   scraped: number;
   total: number;
   startedAt: string | null;
+  stalled?: boolean;
 };
 
 export async function getActiveJobs(): Promise<ActiveJob[]> {
@@ -41,7 +42,10 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
 
   const TEN_MIN = new Date(Date.now() - 10 * 60_000).toISOString();
 
-  const [{ data: crawlJobs }, { count: backfillRemaining }, { count: recentUpdates }, { data: settingsRow }] = await Promise.all([
+  const settingsRes = await sb.from("app_settings").select("backfill_started_at").eq("id", 1).single();
+  const startedAt = (settingsRes.data as { backfill_started_at?: string | null } | null)?.backfill_started_at ?? null;
+
+  const [{ data: crawlJobs }, { count: backfillRemaining }, { count: recentUpdates }, { count: backfillDone }] = await Promise.all([
     sb.from("crawl_jobs")
       .select("id, status, profiles_scraped, expected_profiles, started_at, seeds(username)")
       .in("status", ["queued", "running"])
@@ -56,7 +60,13 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
       .select("*", { count: "exact", head: true })
       .not("followers", "is", null)
       .gte("updated_at", new Date(Date.now() - 90_000).toISOString()),
-    sb.from("app_settings").select("backfill_started_at").eq("id", 1).single(),
+    startedAt
+      ? sb.from("leads")
+          .select("*", { count: "exact", head: true })
+          .not("followers", "is", null)
+          .gte("updated_at", startedAt)
+          .neq("status", "rejected")
+      : Promise.resolve({ count: 0 }),
   ]);
 
   const jobs: ActiveJob[] = [];
@@ -79,21 +89,25 @@ export async function getActiveJobs(): Promise<ActiveJob[]> {
     });
   }
 
-  const startedAt = (settingsRow as { backfill_started_at?: string | null } | null)?.backfill_started_at ?? null;
   const startingUp = !!startedAt && startedAt >= TEN_MIN && (backfillRemaining ?? 0) > 0;
-  const backfillActive = ((recentUpdates ?? 0) > 0 || startingUp) && (backfillRemaining ?? 0) > 0;
+  const hasRecentActivity = (recentUpdates ?? 0) > 0;
+  const backfillActive = !!startedAt && (backfillRemaining ?? 0) > 0;
+  const backfillStalled = backfillActive && !hasRecentActivity && !startingUp;
+  const done = backfillDone ?? 0;
+  const remaining = backfillRemaining ?? 0;
 
   if (backfillActive) {
     jobs.push({
       id: "backfill",
       type: "backfill",
-      label: startingUp && (recentUpdates ?? 0) === 0
+      label: startingUp && !hasRecentActivity
         ? "Backfilling metadata — starting up…"
         : "Backfilling metadata",
-      status: "running",
-      scraped: 0,
-      total: backfillRemaining ?? 0,
-      startedAt: null,
+      status: backfillStalled ? "stalled" : "running",
+      scraped: done,
+      total: done + remaining,
+      startedAt,
+      stalled: backfillStalled,
     });
   }
 

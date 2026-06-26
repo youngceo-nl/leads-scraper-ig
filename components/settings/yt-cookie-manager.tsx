@@ -11,6 +11,19 @@ function maskCookie(cookie: string) {
   return cookie.slice(0, 20) + "…" + cookie.slice(-4);
 }
 
+// Cookie-Editor exports JSON: [{name, value, ...}, ...] → "name=value; name=value"
+function normalizeCookieInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("[")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { name: string; value: string }[];
+    if (!Array.isArray(parsed)) return trimmed;
+    return parsed.map((c) => `${c.name}=${c.value}`).join("; ");
+  } catch {
+    return trimmed;
+  }
+}
+
 function LivenessIcon({ status }: { status: CookieLiveness }) {
   if (status === "live") return <CheckCircle2 aria-label="Cookie is active" className="h-3.5 w-3.5 shrink-0 text-green-500" />;
   if (status === "dead") return <XCircle aria-label="Cookie is expired" className="h-3.5 w-3.5 shrink-0 text-destructive" />;
@@ -25,7 +38,7 @@ export function YtCookieManager({ cookies, liveness = [] }: { cookies: string[];
   const handleAdd = () => {
     setError(null);
     start(async () => {
-      const res = await addYtCookie(input);
+      const res = await addYtCookie(normalizeCookieInput(input));
       if (res && "error" in res) { setError(res.error ?? "Failed to add cookie"); return; }
       setInput("");
     });
@@ -64,7 +77,7 @@ export function YtCookieManager({ cookies, liveness = [] }: { cookies: string[];
       <Textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Paste the full Cookie: header from a logged-in YouTube/Google session"
+        placeholder="Paste Cookie-Editor JSON export or the raw Cookie: header string"
         rows={2}
       />
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -79,7 +92,7 @@ export function YtCookieManager({ cookies, liveness = [] }: { cookies: string[];
         {pending ? "Adding…" : "Add cookie"}
       </Button>
       <p className="text-xs text-muted-foreground">
-        In YouTube, open DevTools → Network → click any request → copy the <code>cookie</code> request header. Add one per Google account. When one expires, the scraper uses the next.
+        Use the Cookie-Editor browser extension on YouTube → Export → Export as JSON, then paste here. One cookie per Google account — when one expires the scraper uses the next.
       </p>
     </div>
   );

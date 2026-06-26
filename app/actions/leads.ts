@@ -421,6 +421,26 @@ export async function getPendingCount(): Promise<number> {
   return count ?? 0;
 }
 
+export async function getEnrichNoEmailProgress(): Promise<number> {
+  await requireUser();
+  const { count } = await createAdminClient()
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "qualified")
+    .is("email", null);
+  return count ?? 0;
+}
+
+export async function getEnrichBouncedProgress(since: string): Promise<number> {
+  await requireUser();
+  const { count } = await createAdminClient()
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .not("email", "is", null)
+    .gte("enriched_at", since);
+  return count ?? 0;
+}
+
 // Count leads that still need backfill (followers IS NULL).
 // Returns the remaining count so the activity drawer can compute done = total - remaining.
 export async function getBackfillProgress(): Promise<number> {

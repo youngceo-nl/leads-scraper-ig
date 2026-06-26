@@ -99,6 +99,7 @@ export type AppSettings = {
   yt_google_cookie: string | null;
   yt_google_cookies: string[];
   yt_cookie_status: "live" | "dead" | null;
+  yt_cookie_statuses: Record<string, "live" | "dead" | "unknown">;
   ig_cookie_status: "live" | "dead" | null;
   // Credentials for auto-refreshing the YouTube cookie (see lib/youtube/refresh-cookie.ts)
   yt_google_email: string | null;

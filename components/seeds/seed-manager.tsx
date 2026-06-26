@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addSeed, deleteSeed, startCrawl, startAllCrawls, updateSeedLimit, type ScrapeProvider } from "@/app/actions/seeds";
 import type { Seed } from "@/lib/types";
+import { SystemStatus, type SystemStatusProps } from "@/components/ui/system-status";
 
 function friendlyCookieError(msg: string) {
   const l = msg.toLowerCase();
@@ -31,11 +32,13 @@ export function SeedManager({
   exhaustedSeeds = [],
   jobs,
   defaultLimit,
+  systemStatus,
 }: {
   seeds: Seed[];
   exhaustedSeeds?: Seed[];
   jobs: LatestJob[];
   defaultLimit: number;
+  systemStatus: SystemStatusProps;
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +82,12 @@ export function SeedManager({
       </form>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {info && <p className="text-sm text-muted-foreground">{info}</p>}
+
+      {seeds.length > 0 && (
+        <div className="space-y-2">
+          <SystemStatus {...systemStatus} />
+        </div>
+      )}
 
       {seeds.length > 0 && (
         <div className="flex items-center gap-2">

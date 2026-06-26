@@ -6,7 +6,7 @@ import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { actionLabel, actionIsPositive } from "@/lib/labels";
-import { getPendingCount, getRescoreProgress, getBackfillProgress, cancelBackfill } from "@/app/actions/leads";
+import { getPendingCount, getRescoreProgress, getBackfillProgress, getEnrichNoEmailProgress, getEnrichBouncedProgress, cancelBackfill } from "@/app/actions/leads";
 import { cancelCrawl, getCrawlJobProgress, getActiveJobs, type ActiveJob } from "@/app/actions/crawl-jobs";
 
 type CrawlLog = {
@@ -33,6 +33,7 @@ type BulkJob = {
   done: number;
   crawl_job_id?: string;
   completed?: boolean;
+  lastProgressAt?: number;
 };
 
 export function ActivityDrawerButton() {
@@ -122,6 +123,11 @@ export function ActivityDrawerButton() {
       } else if (bulkJob.type === "backfill") {
         const remaining = await getBackfillProgress();
         done = bulkJob.total - remaining;
+      } else if (bulkJob.type === "reenrich_no_email") {
+        const remaining = await getEnrichNoEmailProgress();
+        done = bulkJob.total - remaining;
+      } else if (bulkJob.type === "reenrich_bounced") {
+        done = await getEnrichBouncedProgress(new Date(bulkJob.startedAt).toISOString());
       } else if (bulkJob.type === "crawl" && bulkJob.crawl_job_id) {
         const p = await getCrawlJobProgress(bulkJob.crawl_job_id);
         done = p.scraped;
@@ -142,10 +148,15 @@ export function ActivityDrawerButton() {
         }
         return; // still running, keep polling
       }
-      const updated = (prev: BulkJob | null) => prev ? { ...prev, done: Math.max(prev.done, done) } : null;
       setBulkJob((prev) => {
-        const next = updated(prev);
-        if (next) localStorage.setItem("bulk_job", JSON.stringify(next));
+        if (!prev) return null;
+        const newDone = Math.max(prev.done, done);
+        const next: BulkJob = {
+          ...prev,
+          done: newDone,
+          lastProgressAt: newDone > prev.done ? Date.now() : (prev.lastProgressAt ?? Date.now()),
+        };
+        localStorage.setItem("bulk_job", JSON.stringify(next));
         return next;
       });
       if (bulkJob.type !== "crawl" && done >= bulkJob.total) {
@@ -337,6 +348,7 @@ export function ActivityDrawerButton() {
 
 function ActiveJobRow({ job }: { job: ActiveJob }) {
   const isPlaywright = job.type === "crawl" && job.scraped === 0 && job.status === "running";
+  const isStalled = !!job.stalled;
   const pct = job.total > 0 ? Math.min(100, Math.round((job.scraped / job.total) * 100)) : null;
   const [confirming, setConfirming] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -352,10 +364,13 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
   };
 
   return (
-    <div className="px-4 py-3 bg-blue-50/50 dark:bg-blue-950/30 space-y-1.5">
+    <div className={`px-4 py-3 space-y-1.5 ${isStalled ? "bg-yellow-50/50 dark:bg-yellow-950/30" : "bg-blue-50/50 dark:bg-blue-950/30"}`}>
       <div className="flex items-center gap-2">
-        <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
-        <span className="text-xs font-medium flex-1 truncate">{job.label}</span>
+        {isStalled
+          ? <AlertTriangle className="h-3.5 w-3.5 text-yellow-600 shrink-0" />
+          : <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
+        }
+        <span className="text-xs font-medium flex-1 truncate">{job.label}{isStalled ? " — stuck?" : ""}</span>
         {job.total > 0 && (
           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
             {job.scraped} / {job.total}
@@ -389,6 +404,10 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
         <p className="text-[11px] text-muted-foreground pl-5">
           Playwright browser is open — this takes 1–3 min, hang tight
         </p>
+      ) : isStalled ? (
+        <p className="text-[11px] text-yellow-700 dark:text-yellow-400 pl-5">
+          No updates in the last 90 s — Inngest may be paused or out of retries
+        </p>
       ) : pct !== null ? (
         <div className="pl-5 space-y-1">
           <div className="h-1 bg-blue-100 dark:bg-blue-900 rounded-full overflow-hidden">
@@ -413,6 +432,11 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
     : etaMin < 1 ? "< 1 min"
     : etaMin < 60 ? `~${Math.round(etaMin)} min`
     : `~${Math.round(etaMin / 60)}h`;
+
+  // Stalled: no progress for 5+ minutes after at least 1 min of running
+  const sinceProgressMs = Date.now() - (job.lastProgressAt ?? job.startedAt);
+  const stalled = !job.completed && elapsedMin > 1 && sinceProgressMs > 5 * 60_000 && remaining > 0;
+  const stalledMin = Math.round(sinceProgressMs / 60_000);
 
   const [confirming, setConfirming] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -443,9 +467,15 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
   }
 
   return (
-    <div className="px-4 py-3 border-b bg-muted/30 shrink-0 space-y-2">
+    <div className={`px-4 py-3 border-b shrink-0 space-y-2 ${stalled ? "bg-yellow-50/50 dark:bg-yellow-950/30" : "bg-muted/30"}`}>
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{job.label}</span>
+        <div className="flex items-center gap-1.5">
+          {stalled
+            ? <AlertTriangle className="h-3.5 w-3.5 text-yellow-600 shrink-0" />
+            : <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
+          }
+          <span className="font-medium">{job.label}{stalled ? " — stuck?" : ""}</span>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground tabular-nums">{job.done} / {job.total}</span>
           {confirming ? (
@@ -478,13 +508,16 @@ function BulkProgress({ job, onCancel }: { job: BulkJob; onCancel: () => void })
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
         <div
-          className="h-full bg-primary rounded-full transition-all duration-500"
+          className={`h-full rounded-full transition-all duration-500 ${stalled ? "bg-yellow-500" : "bg-primary"}`}
           style={{ width: `${pct}%` }}
         />
       </div>
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>{pct}% done{perMin ? ` · ${Math.round(perMin)}/min` : ""}</span>
-        {eta && <span>ETA {eta}</span>}
+        {stalled
+          ? <span className="text-yellow-700 dark:text-yellow-400">No progress in {stalledMin} min — check Inngest</span>
+          : eta && <span>ETA {eta}</span>
+        }
       </div>
     </div>
   );

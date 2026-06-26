@@ -24,6 +24,8 @@ import {
 } from "@/app/actions/leads";
 import { analyzeAllPending } from "@/app/actions/process-lead";
 import { checkEmailBounces } from "@/app/actions/outreach";
+import { SystemStatus, type SystemStatusProps } from "@/components/ui/system-status";
+
 
 const openActivity = (detail?: Record<string, unknown>) =>
   window.dispatchEvent(new CustomEvent("open-activity-drawer", { detail: detail ?? {} }));
@@ -39,6 +41,7 @@ type Props = {
   bouncedCount: number;
   noEmailCount: number;
   exportHref: string;
+  systemStatus: SystemStatusProps;
 };
 
 export function LeadsActionsMenu({
@@ -52,6 +55,7 @@ export function LeadsActionsMenu({
   bouncedCount,
   noEmailCount,
   exportHref,
+  systemStatus,
 }: Props) {
   const router = useRouter();
   const [, start] = useTransition();
@@ -81,6 +85,8 @@ export function LeadsActionsMenu({
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="end" className="w-56">
+          <SystemStatus {...systemStatus} />
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setCsvOpen(true)}>
             <Download className="h-4 w-4 mr-2" />
             Import CSV

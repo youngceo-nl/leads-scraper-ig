@@ -201,6 +201,26 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             noEmailCount={noEmailCount ?? 0}
             rejectedCount={rejectedCount ?? 0}
             exportHref={exportHref}
+            systemStatus={{
+              igStatus: !igConfigured ? "missing"
+                : settings?.ig_cookie_status === "dead" ? "dead"
+                : settings?.ig_cookie_status === "live" ? "ok"
+                : "unknown",
+              ytStatus: !ytConfigured ? "missing"
+                : (settings?.yt_cookie_status === "dead" || Object.values(settings?.yt_cookie_statuses ?? {}).some((s) => s === "dead") || (settings?.yt_accounts ?? []).some((a) => a.last_error)) ? "dead"
+                : (settings?.yt_cookie_status === "live" || Object.values(settings?.yt_cookie_statuses ?? {}).every((s) => s === "live")) ? "ok"
+                : "unknown",
+              emailKeysOk: !!(settings && (
+                settings.hunter_api_key ||
+                settings.apollo_api_key ||
+                (settings.findymail_api_keys ?? []).length > 0 ||
+                (settings.prospeo_api_keys ?? []).length > 0
+              )),
+              gmailOk: !!(settings && (
+                settings.gmail_oauth_refresh_token ||
+                (settings.gmail_user && settings.gmail_app_password)
+              )),
+            }}
           />
         </div>
       </div>

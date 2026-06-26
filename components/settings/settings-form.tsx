@@ -74,7 +74,7 @@ export function SettingsForm({
   return (
     <>
       <form id="settings-form" onChange={markDirty} onSubmit={handleSubmit} className="space-y-6 pb-24">
-        <Card>
+        <Card id="email">
           <CardHeader><CardTitle>API keys</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
@@ -130,7 +130,7 @@ export function SettingsForm({
         <Card>
           <CardHeader><CardTitle>Cookie management</CardTitle></CardHeader>
           <CardContent className="space-y-6">
-            <div className="space-y-2">
+            <div id="instagram" className="space-y-2">
               <p className="text-sm font-medium">Instagram accounts</p>
               <p className="text-xs text-muted-foreground">
                 Organise accounts into groups of 5. Activate a group to use only those accounts for scraping — switch groups when one gets flagged.
@@ -145,7 +145,7 @@ export function SettingsForm({
               />
             </div>
             <Separator />
-            <div className="space-y-2">
+            <div id="youtube" className="space-y-2">
               <p className="text-sm font-medium">YouTube accounts</p>
               <p className="text-xs text-muted-foreground">
                 Add Google/YouTube accounts for email reveal only — not used for outreach. The system logs in to scrape the YouTube "View email" button on creator profiles.
@@ -200,7 +200,7 @@ export function SettingsForm({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="outreach">
           <CardHeader><CardTitle>Gmail (outreach sender)</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground leading-snug">

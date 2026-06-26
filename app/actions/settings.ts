@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSettings, updateSettings } from "@/lib/config/settings";
+import { checkYoutubeCookieLive } from "@/lib/youtube/refresh-cookie";
 import type { AppSettings, ManagedAccount } from "@/lib/types";
 
 async function requireUser() {
@@ -460,6 +461,22 @@ export async function testManagedAccountCookie(
     }
   }
 
+  if (platform === "youtube") {
+    const liveness = await checkYoutubeCookieLive(account.cookie);
+    const ok = liveness === "live";
+    const message = ok
+      ? "Cookie is live — logged in to YouTube."
+      : liveness === "dead"
+      ? "Cookie is expired or invalid."
+      : "Could not determine status — YouTube may be unreachable.";
+    const updated = accounts.map((a) =>
+      a.id === id ? { ...a, last_error: ok ? null : message } : a,
+    );
+    await updateSettings({ [key]: updated } as Partial<AppSettings>);
+    revalidatePath("/settings");
+    return { ok, message };
+  }
+
   return { ok: false, message: "Test not supported for this platform" };
 }
 
@@ -564,6 +581,22 @@ export async function setGroupPaused(platform: Platform, group: string, paused: 
 export async function persistYtCookieStatus(status: "live" | "dead"): Promise<void> {
   try {
     await updateSettings({ yt_cookie_status: status });
+  } catch { /* non-fatal */ }
+}
+
+// Persist per-cookie liveness results keyed by last-12-chars of each cookie.
+// Called from the settings page after it probes all cookies so SystemStatus
+// can show whether any specific cookie is dead without live HTTP checks.
+export async function persistYtCookieStatuses(
+  cookies: string[],
+  statuses: ("live" | "dead" | "unknown")[],
+): Promise<void> {
+  try {
+    const map: Record<string, "live" | "dead" | "unknown"> = {};
+    cookies.forEach((c, i) => {
+      if (c.trim()) map[c.slice(-12)] = statuses[i] ?? "unknown";
+    });
+    await updateSettings({ yt_cookie_statuses: map });
   } catch { /* non-fatal */ }
 }
 
