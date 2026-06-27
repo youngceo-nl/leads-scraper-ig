@@ -167,6 +167,11 @@ export type Lead = {
   email_verifier: string | null;
   enriched_at: string | null;
   enrichment_error: string | null;
+  email_v2: string | null;
+  email_v2_status: string | null;
+  email_v2_provider: string | null;
+  email_v2_enriched_at: string | null;
+  email_v2_error: string | null;
   funnel_url: string | null;
   funnel_platform: string | null;
   funnel_program_name: string | null;

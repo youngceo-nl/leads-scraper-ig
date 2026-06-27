@@ -4,7 +4,7 @@
 // is being checked right now. Kept in its own module (no "server-only" import)
 // so both the server pipeline and the client button can import the type.
 
-export type EnrichStage = "bio" | "website" | "youtube" | "linkedin" | "domain_inference";
+export type EnrichStage = "bio" | "website" | "youtube" | "linkedin" | "domain_inference" | "ig_mobile";
 
 export type EnrichProgress = {
   stage: EnrichStage;
