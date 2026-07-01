@@ -45,6 +45,7 @@ type Search = {
   has_linkedin?: string;
   has_youtube?: string;
   has_outreach?: string;
+  lead_source?: string;
   sort?: string;
   page?: string;
   search?: string;
@@ -63,26 +64,31 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
     const keywordOr = buildKeywordOr(sp.q);
     if (keywordOr) q = q.or(keywordOr);
-    if (sp.search) q = q.or(`username.ilike.%${sp.search}%,full_name.ilike.%${sp.search}%,email.ilike.%${sp.search}%`);
-    if (sp.status && sp.status !== "all") q = q.eq("status", sp.status);
-    if (sp.niche) q = q.ilike("niche", `%${sp.niche}%`);
-    if (sp.business_model) q = q.eq("business_model", sp.business_model);
-    if (sp.min_followers) q = q.gte("followers", Number(sp.min_followers));
-    if (sp.max_followers) q = q.lte("followers", Number(sp.max_followers));
-    if (sp.min_engagement) q = q.gte("engagement_rate", Number(sp.min_engagement) / 100);
-    if (sp.min_reels_30d && !safe) q = q.gte("reels_last_30_days", Number(sp.min_reels_30d));
-    if (sp.min_score) q = q.gte("overall_score", Number(sp.min_score));
-    if (sp.funnel_platform) q = q.eq("funnel_platform", sp.funnel_platform);
-    if (sp.has_funnel === "yes") q = q.not("funnel_program_name", "is", null);
-    if (sp.has_funnel === "no") q = q.is("funnel_program_name", null);
-    if (sp.has_email === "yes") q = q.not("email", "is", null);
-    if (sp.has_email === "no") q = q.is("email", null);
-    if (sp.has_linkedin === "yes") q = q.not("linkedin_url", "is", null);
-    if (sp.has_linkedin === "no") q = q.is("linkedin_url", null);
-    if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
-    if (sp.has_youtube === "no") q = q.is("youtube_url", null);
-    if (sp.has_outreach === "yes") q = q.gt("outreach_count", 0);
-    if (sp.has_outreach === "no") q = q.eq("outreach_count", 0);
+    if (sp.search) q = q.or(`username.ilike.%${sp.search}%,full_name.ilike.%${sp.search}%,email.ilike.%${sp.search}%,email_v2.ilike.%${sp.search}%`);
+    // When the search bar is active, skip all filter-bar conditions — intent is "find this specific lead"
+    if (!sp.search) {
+      if (sp.status && sp.status !== "all") q = q.eq("status", sp.status);
+      if (sp.niche) q = q.ilike("niche", `%${sp.niche}%`);
+      if (sp.business_model) q = q.eq("business_model", sp.business_model);
+      if (sp.min_followers) q = q.gte("followers", Number(sp.min_followers));
+      if (sp.max_followers) q = q.lte("followers", Number(sp.max_followers));
+      if (sp.min_engagement) q = q.gte("engagement_rate", Number(sp.min_engagement) / 100);
+      if (sp.min_reels_30d && !safe) q = q.gte("reels_last_30_days", Number(sp.min_reels_30d));
+      if (sp.min_score) q = q.gte("overall_score", Number(sp.min_score));
+      if (sp.funnel_platform) q = q.eq("funnel_platform", sp.funnel_platform);
+      if (sp.has_funnel === "yes") q = q.not("funnel_program_name", "is", null);
+      if (sp.has_funnel === "no") q = q.is("funnel_program_name", null);
+      if (sp.has_email === "yes") q = q.not("email", "is", null);
+      if (sp.has_email === "no") q = q.is("email", null);
+      if (sp.has_linkedin === "yes") q = q.not("linkedin_url", "is", null);
+      if (sp.has_linkedin === "no") q = q.is("linkedin_url", null);
+      if (sp.has_youtube === "yes") q = q.not("youtube_url", "is", null);
+      if (sp.has_youtube === "no") q = q.is("youtube_url", null);
+      if (sp.has_outreach === "yes") q = q.gt("outreach_count", 0);
+      if (sp.has_outreach === "no") q = q.eq("outreach_count", 0);
+      if (sp.lead_source === "crawl") q = q.is("lead_source", null);
+      else if (sp.lead_source) q = q.eq("lead_source", sp.lead_source);
+    }
 
     if (sortStr === "uncontacted_score") {
       // Not contacted first (outreach_count = 0 / null), then score desc within each group
@@ -113,6 +119,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     { count: qualifiedFunnelCount },
     { count: bouncedCount },
     { count: noEmailCount },
+    { count: tgTotal },
+    { count: tgQualified },
+    { count: tgReview },
+    { count: tgRejected },
+    { count: tgPending },
+    { count: tgNoEmail },
+    { count: tgReadyToSend },
+    { count: tgSent },
   ] = await Promise.all([
     getSettings().catch(() => null),
     buildQuery(sort, false),
@@ -138,6 +152,24 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       .eq("email_status", "bounced"),
     sb.from("leads").select("id", { count: "exact", head: true })
       .eq("status", "qualified").is("email", null),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").eq("status", "qualified"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").eq("status", "review"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").eq("status", "rejected"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").eq("status", "pending"),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").in("status", ["qualified", "review"])
+      .is("email", null).is("email_v2", null),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").in("status", ["qualified", "review"])
+      .or("email.ilike.*@*,email_v2.ilike.*@*").eq("outreach_count", 0),
+    sb.from("leads").select("id", { count: "exact", head: true })
+      .eq("lead_source", "telegram").gt("outreach_count", 0),
   ]);
 
   const seedMap = new Map((seeds ?? []).map((s) => [s.id, s.username]));
@@ -224,6 +256,24 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           />
         </div>
       </div>
+
+      {(tgTotal ?? 0) > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Telegram pipeline</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2 text-sm">
+            <TgStat href="/leads?lead_source=telegram" label="Total" value={tgTotal ?? 0} />
+            <TgStat href="/leads?lead_source=telegram&status=qualified" label="Qualified" value={tgQualified ?? 0} variant="default" />
+            <TgStat href="/leads?lead_source=telegram&status=review" label="Review" value={tgReview ?? 0} variant="secondary" />
+            <TgStat href="/leads?lead_source=telegram&status=rejected" label="Rejected" value={tgRejected ?? 0} variant="destructive" />
+            <TgStat href="/leads?lead_source=telegram&status=pending" label="Not analyzed" value={tgPending ?? 0} variant="outline" />
+            <TgStat href="/leads?lead_source=telegram&has_email=no" label="Missing email" value={tgNoEmail ?? 0} variant="outline" />
+            <TgStat href="/leads?lead_source=telegram&has_outreach=no" label="Ready to send" value={tgReadyToSend ?? 0} variant="default" />
+            <TgStat href="/leads?lead_source=telegram&has_outreach=yes" label="Sent" value={tgSent ?? 0} variant="outline" />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Filters</CardTitle></CardHeader>
@@ -332,7 +382,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                     />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground" data-col="source">
-                    {l.source_seed_id && seedMap.get(l.source_seed_id) ? (
+                    {l.lead_source ? (
+                      <Badge variant="outline" className="text-xs">{leadSourceLabel(l.lead_source)}</Badge>
+                    ) : l.source_seed_id && seedMap.get(l.source_seed_id) ? (
                       <SourceBadge
                         username={seedMap.get(l.source_seed_id)!}
                         count={countMap.get(l.source_seed_id) ?? 0}
@@ -415,6 +467,29 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       <LeadEditDialog />
     </div>
   );
+}
+
+function TgStat({
+  href, label, value, variant = "outline",
+}: {
+  href: string;
+  label: string;
+  value: number;
+  variant?: "default" | "secondary" | "destructive" | "outline";
+}) {
+  return (
+    <Link href={href} className="inline-flex items-center gap-1.5 hover:opacity-80">
+      <Badge variant={variant}>{formatNumber(value)}</Badge>
+      <span className="text-muted-foreground text-xs">{label}</span>
+    </Link>
+  );
+}
+
+function leadSourceLabel(source: string): string {
+  if (source === "telegram") return "Telegram";
+  if (source === "manual_ui") return "Manual";
+  if (source === "manual_api") return "API";
+  return source;
 }
 
 function StatusBadge({ status }: { status: string }) {

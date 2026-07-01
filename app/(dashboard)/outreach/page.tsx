@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { OutreachPreviewList } from "@/components/outreach/outreach-preview-list";
 import { isPlausible } from "@/lib/leads/email-extract";
 import type { Lead } from "@/lib/types";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -27,33 +28,51 @@ export default async function OutreachPreviewPage() {
 
   const { data: rows } = await sb
     .from("leads")
-    .select("id, username, full_name, email, email_provider, email_v2, email_v2_provider, email_v2_status, overall_score, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, status")
+    .select("id, username, full_name, email, email_provider, email_v2, email_v2_provider, email_v2_status, email_status, overall_score, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, status, outreach_count")
     .in("status", ["qualified", "review"])
-    .or("email.ilike.*@*,email_v2.ilike.*@*")
-    .neq("email_status", "bounced")
-    .neq("email_status", "invalid")
-    .eq("outreach_count", 0)
     .order("overall_score", { ascending: false })
-    .limit(DAILY_TARGET);
+    .limit(200);
 
   const leads = (rows ?? []) as Lead[];
 
   const sendable = [];
   const blocked = [];
+  const alreadySent: { leadId: string; username: string; score: number | null; niche: string | null; email: string | null }[] = [];
+  const needsEmail: { leadId: string; username: string; score: number | null; niche: string | null }[] = [];
 
   for (const lead of leads) {
+    const outreachCount = (lead as Record<string, unknown>).outreach_count as number ?? 0;
+
+    if (outreachCount > 0) {
+      const email = (lead.email as string | null) ?? ((lead as Record<string, unknown>).email_v2 as string | null) ?? null;
+      alreadySent.push({ leadId: lead.id, username: lead.username, score: lead.overall_score != null ? Number(lead.overall_score) : null, niche: lead.niche as string | null, email });
+      continue;
+    }
+
+    const emailStatus = (lead as Record<string, unknown>).email_status as string | null;
+    if (emailStatus === "bounced" || emailStatus === "invalid") {
+      needsEmail.push({ leadId: lead.id, username: lead.username, score: lead.overall_score != null ? Number(lead.overall_score) : null, niche: lead.niche as string | null });
+      continue;
+    }
+
     // Prefer v1 email; fall back to v2 if v1 is missing
     const resolvedEmail = (lead.email as string | null)
       ?? ((lead as Record<string, unknown>).email_v2 as string | null)
       ?? null;
-    if (!resolvedEmail || !isPlausible(resolvedEmail)) continue;
+    if (!resolvedEmail || !isPlausible(resolvedEmail)) {
+      needsEmail.push({ leadId: lead.id, username: lead.username, score: lead.overall_score != null ? Number(lead.overall_score) : null, niche: lead.niche as string | null });
+      continue;
+    }
     const resolvedSource = lead.email
       ? ((lead as Record<string, unknown>).email_provider as string | null)
       : ((lead as Record<string, unknown>).email_v2_provider as string | null);
 
     // Skip if the resolved email has a bounced/invalid v2 status
     const v2Status = (lead as Record<string, unknown>).email_v2_status as string | null;
-    if (!lead.email && v2Status && /^(bounced|invalid)$/i.test(v2Status)) continue;
+    if (!lead.email && v2Status && /^(bounced|invalid)$/i.test(v2Status)) {
+      needsEmail.push({ leadId: lead.id, username: lead.username, score: lead.overall_score != null ? Number(lead.overall_score) : null, niche: lead.niche as string | null });
+      continue;
+    }
 
     const firstName = extractFirstName(lead.full_name as string | null)
       ?? extractFirstNameFromUsername(lead.username as string | null);
@@ -80,7 +99,7 @@ export default async function OutreachPreviewPage() {
     });
   }
 
-  if (leads.length === 0) {
+  if (sendable.length === 0 && blocked.length === 0 && alreadySent.length === 0 && needsEmail.length === 0) {
     return (
       <div className="p-6 max-w-4xl">
         <h1 className="text-2xl font-semibold tracking-tight mb-6">Outreach preview</h1>
@@ -97,9 +116,16 @@ export default async function OutreachPreviewPage() {
 
   return (
     <div className="p-6 max-w-4xl">
+      <div className="flex justify-end mb-2">
+        <Link href="/outreach/followup" className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2">
+          Follow-up queue →
+        </Link>
+      </div>
       <OutreachPreviewList
         sendable={sendable}
         blocked={blocked}
+        alreadySent={alreadySent}
+        needsEmail={needsEmail}
         intervalMinutes={INTERVAL_MINUTES}
         sentToday={sentToday ?? 0}
       />

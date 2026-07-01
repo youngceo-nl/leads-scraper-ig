@@ -1,7 +1,7 @@
 // Build a PostgREST `.or(...)` filter from a comma-separated keyword string.
-// Terms are matched ilike "%term%" against username, full_name, bio, niche.
+// Terms are matched ilike "%term%" against username, full_name, bio, niche, email.
 // Returns null when there are no usable terms.
-const FIELDS = ["username", "full_name", "bio", "niche"] as const;
+const FIELDS = ["username", "full_name", "bio", "niche", "email", "email_v2"] as const;
 
 export function parseKeywords(q: string | undefined | null): string[] {
   if (!q) return [];

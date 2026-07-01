@@ -174,6 +174,19 @@ export function LeadsFilterBar({ initial }: { initial: State }) {
           </Select>
         </Field>
 
+        <Field label="Source">
+          <Select value={staged.lead_source ?? "any"} onValueChange={v => set("lead_source", v === "any" ? undefined : v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem value="crawl">IG crawl</SelectItem>
+              <SelectItem value="telegram">Telegram</SelectItem>
+              <SelectItem value="manual_ui">Manual (UI)</SelectItem>
+              <SelectItem value="manual_api">API</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+
         <Field label="Sort by" className="md:col-span-2">
           <Select value={staged.sort ?? "uncontacted_score"} onValueChange={v => set("sort", v)}>
             <SelectTrigger><SelectValue /></SelectTrigger>

@@ -3,6 +3,8 @@ import { ExternalLink, Youtube, Check, X } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EnrichV2Button } from "@/components/leads/enrich-v2-button";
+import { V2ValidationCard } from "@/components/leads/v2-validation-card";
+import { getV2ValidationStatus } from "@/app/actions/enrich";
 import { formatNumber, scoreColor } from "@/lib/utils";
 import type { Lead } from "@/lib/types";
 
@@ -37,6 +39,7 @@ export default async function EmailLabPage() {
   const enrichedV2Count = rows.filter((l) => l.email_v2_enriched_at).length;
   const v2HitCount = rows.filter((l) => l.email_v2 && l.email_v2_status === "found").length;
   const v1HitCount = rows.filter((l) => l.email && l.email_status === "found").length;
+  const v2Validation = await getV2ValidationStatus();
 
   return (
     <div className="p-6 space-y-6">
@@ -69,6 +72,8 @@ export default async function EmailLabPage() {
           </CardContent>
         </Card>
       </div>
+
+      <V2ValidationCard initial={v2Validation} />
 
       <Card>
         <CardHeader>

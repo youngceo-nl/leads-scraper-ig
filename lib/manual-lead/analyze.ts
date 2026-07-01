@@ -14,7 +14,7 @@ export type ManualLeadResult =
   | { ok: true; username: string; profile: ScrapedProfile; score: ClaudeScore }
   | { ok: false; username: string; error: string; duplicate?: true };
 
-export async function analyzeIgLead(input: string): Promise<ManualLeadResult> {
+export async function analyzeIgLead(input: string, source: string = "manual_api"): Promise<ManualLeadResult> {
   const username = toUsername(input);
   if (!username) return { ok: false, username: input, error: "Could not parse username from input" };
 
@@ -80,6 +80,7 @@ export async function analyzeIgLead(input: string): Promise<ManualLeadResult> {
     crawl_depth: 0,
     source_seed_id: null,
     parent_username: null,
+    lead_source: source,
   });
 
   if (status === "qualified") {

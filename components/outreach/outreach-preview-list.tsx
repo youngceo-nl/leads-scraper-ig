@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Send, Loader2, AlertCircle, CheckCircle2, RotateCcw, ExternalLink } from "lucide-react";
+import { Send, Loader2, AlertCircle, CheckCircle2, RotateCcw, ExternalLink, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,17 +30,36 @@ export type BlockedPreview = {
   blockReason: string;
 };
 
+export type AlreadySentPreview = {
+  leadId: string;
+  username: string;
+  score: number | null;
+  niche: string | null;
+  email: string | null;
+};
+
+export type NeedsEmailPreview = {
+  leadId: string;
+  username: string;
+  score: number | null;
+  niche: string | null;
+};
+
 type EditState = { subject: string; body: string };
 type CardStatus = "idle" | "pending" | "sent" | "error";
 
 export function OutreachPreviewList({
   sendable,
   blocked,
+  alreadySent,
+  needsEmail,
   intervalMinutes,
   sentToday,
 }: {
   sendable: SendablePreview[];
   blocked: BlockedPreview[];
+  alreadySent: AlreadySentPreview[];
+  needsEmail: NeedsEmailPreview[];
   intervalMinutes: number;
   sentToday: number;
 }) {
@@ -124,12 +143,12 @@ export function OutreachPreviewList({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Outreach preview</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {sendable.length === 0
-              ? "No leads ready to send to right now."
-              : [
-                  `${unsent.length} ready`,
+            {[
+                  unsent.length > 0 ? `${unsent.length} ready` : (sendable.length === 0 ? "No leads ready to send" : null),
                   sendable.length - unsent.length > 0 ? `${sendable.length - unsent.length} sent this session` : null,
                   blocked.length > 0 ? `${blocked.length} blocked` : null,
+                  alreadySent.length > 0 ? `${alreadySent.length} already contacted` : null,
+                  needsEmail.length > 0 ? `${needsEmail.length} need email` : null,
                   sentToday > 0 ? `${sentToday} sent today` : null,
                 ].filter(Boolean).join(" · ")}
           </p>
@@ -161,6 +180,73 @@ export function OutreachPreviewList({
                 <li key={leadId} className="text-sm text-amber-800 flex items-center gap-2">
                   <span className="font-medium">@{username}</span>
                   <span className="text-amber-600">{blockReason}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Already sent */}
+      {alreadySent.length > 0 && (
+        <Card className="border-green-200 bg-green-50/40">
+          <CardHeader className="pb-2 pt-4">
+            <p className="text-sm font-medium text-green-800 flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4" />
+              {alreadySent.length} already contacted
+            </p>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <ul className="space-y-1">
+              {alreadySent.map(({ leadId, username, score, niche, email }) => (
+                <li key={leadId} className="text-sm flex items-center gap-2 text-green-900">
+                  <Badge variant="outline" className={`text-xs shrink-0 ${scoreColor(score)}`}>
+                    {score != null ? score.toFixed(1) : "—"}
+                  </Badge>
+                  <a
+                    href={`https://www.instagram.com/${username}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium hover:underline inline-flex items-center gap-1"
+                  >
+                    @{username}
+                    <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                  </a>
+                  {niche && <span className="text-xs text-green-700">{niche}</span>}
+                  {email && <span className="text-xs text-muted-foreground ml-auto">{email}</span>}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Needs email */}
+      {needsEmail.length > 0 && (
+        <Card className="border-slate-200 bg-slate-50/50">
+          <CardHeader className="pb-2 pt-4">
+            <p className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+              <Mail className="h-4 w-4" />
+              {needsEmail.length} need{needsEmail.length === 1 ? "s" : ""} email enrichment
+            </p>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <ul className="space-y-1">
+              {needsEmail.map(({ leadId, username, score, niche }) => (
+                <li key={leadId} className="text-sm flex items-center gap-2 text-slate-700">
+                  <Badge variant="outline" className={`text-xs shrink-0 ${scoreColor(score)}`}>
+                    {score != null ? score.toFixed(1) : "—"}
+                  </Badge>
+                  <a
+                    href={`https://www.instagram.com/${username}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium hover:underline inline-flex items-center gap-1"
+                  >
+                    @{username}
+                    <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                  </a>
+                  {niche && <span className="text-xs text-slate-500">{niche}</span>}
                 </li>
               ))}
             </ul>

@@ -64,7 +64,7 @@ export async function addLead(formData: FormData): Promise<AddLeadResult> {
 
   const { data: inserted, error } = await sb
     .from("leads")
-    .insert({ username, profile_url: profileUrl(username), status: "pending", crawl_depth: 0 })
+    .insert({ username, profile_url: profileUrl(username), status: "pending", crawl_depth: 0, lead_source: "manual_ui" })
     .select("id")
     .single();
 
@@ -646,6 +646,12 @@ export async function cancelBackfill(): Promise<void> {
   await requireUser();
   const sb = createAdminClient();
   await sb.from("app_settings").update({ backfill_cancel_requested: true }).eq("id", 1);
+}
+
+export async function dismissStalledBackfill(): Promise<void> {
+  await requireUser();
+  const sb = createAdminClient();
+  await sb.from("app_settings").update({ backfill_started_at: null }).eq("id", 1);
 }
 
 export type OperationStatus = {

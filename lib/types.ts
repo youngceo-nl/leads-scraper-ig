@@ -161,6 +161,7 @@ export type Lead = {
   crawl_depth: number;
   source_seed_id: string | null;
   parent_username: string | null;
+  lead_source: string | null;
   email: string | null;
   email_status: string | null;
   email_provider: string | null;
@@ -203,6 +204,23 @@ export type OutreachMessage = {
   error: string | null;
   sent_by: string | null;
   sent_at: string;
+};
+
+export const FOLLOWUP_BODY =
+  "Hey there, did you get the chance to check it out? Please let me know what you think";
+
+export type FollowupPreview = {
+  leadId: string;
+  username: string;
+  email: string;
+  emailSource: string | null;
+  score: number | null;
+  status: string;
+  niche: string | null;
+  subject: string;
+  body: string;
+  inReplyTo: string | null;
+  threadId: string | null;
 };
 
 export type FunnelPlatform =

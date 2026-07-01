@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     const t = target; // capture for closure
     after(() => enqueue(async () => {
       await tgSend(chatId, `🔍 Analyzing @${t}...`, threadId);
-      const result = await analyzeIgLead(t);
+      const result = await analyzeIgLead(t, "telegram");
       await tgSend(chatId, formatResult(result), threadId);
     }));
   }

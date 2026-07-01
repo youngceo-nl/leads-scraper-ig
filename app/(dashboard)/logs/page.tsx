@@ -2,17 +2,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { LogsLive } from "@/components/logs/logs-live";
 import { PipelineStats } from "@/components/logs/pipeline-stats";
 import { LiveOperationCard } from "@/components/logs/live-operation-card";
+import { FollowupBatchCard } from "@/components/outreach/followup-batch-card";
 import { getPipelineStats } from "@/app/actions/leads";
+import { getFollowupBatchProgress } from "@/app/actions/outreach";
 import { Separator } from "@/components/ui/separator";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogsPage() {
   const sb = createAdminClient();
-  const [{ data: crawl }, { data: errors }, stats] = await Promise.all([
+  const [{ data: crawl }, { data: errors }, stats, followupProgress] = await Promise.all([
     sb.from("crawl_logs").select("*").order("created_at", { ascending: false }).limit(200),
     sb.from("error_logs").select("*").order("created_at", { ascending: false }).limit(100),
     getPipelineStats(),
+    getFollowupBatchProgress(),
   ]);
 
   return (
@@ -23,6 +26,8 @@ export default async function LogsPage() {
       </div>
 
       <LiveOperationCard />
+
+      <FollowupBatchCard initial={followupProgress} />
 
       <PipelineStats stats={stats} />
 

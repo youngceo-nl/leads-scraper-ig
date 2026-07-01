@@ -11,7 +11,7 @@ const INTERVAL_MINUTES = 20;
 // with a confirmed email that haven't been contacted yet, ordered by score.
 export const dailySend = inngest.createFunction(
   { id: "daily-send", name: "Daily outreach send" },
-  { cron: "0 8 * * *" },
+  { event: "outreach/manual.send.requested" },
   async ({ step }) => {
     const ready = await step.run("check-gmail", () => gmailReady());
     if (!ready) return { skipped: "Gmail not connected" };

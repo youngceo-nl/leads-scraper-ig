@@ -14,6 +14,7 @@ type Args = {
   crawl_depth: number;
   source_seed_id: string | null;
   parent_username: string | null;
+  lead_source?: string | null;
 };
 
 export async function persistLead(args: Args) {
@@ -57,6 +58,7 @@ export async function persistLead(args: Args) {
     crawl_depth: args.crawl_depth,
     source_seed_id: args.source_seed_id,
     parent_username: args.parent_username,
+    lead_source: args.lead_source ?? null,
   };
 
   const { data, error } = await sb

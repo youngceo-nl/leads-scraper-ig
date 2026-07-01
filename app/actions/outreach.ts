@@ -8,6 +8,7 @@ import { renderTemplate, buildLeadContext, textToHtml } from "@/lib/outreach/tem
 import { logCrawl } from "@/lib/pipeline/persist";
 import { gmailSearch, gmailGetMessage } from "@/lib/google/gmail-api";
 import { inngest } from "@/inngest/client";
+import { FOLLOWUP_BODY, type FollowupPreview } from "@/lib/types";
 
 export type RenderedOutreach = {
   to: string | null;
@@ -313,4 +314,239 @@ export async function checkEmailBounces(): Promise<CheckBouncesResult> {
 
   revalidatePath("/leads");
   return { ok: true, bounced, checked: ndrIds.length };
+}
+
+// Loads all leads eligible for a follow-up and pairs them with their original
+// outreach thread info for in-thread Gmail replies.
+export async function getFollowupQueue(): Promise<FollowupPreview[]> {
+  const admin = createAdminClient();
+
+  const { data: leads } = await admin
+    .from("leads")
+    .select("id, username, email, email_provider, email_v2, email_v2_provider, overall_score, status, niche")
+    .gte("outreach_count", 1)
+    .eq("followup_count", 0)
+    .or("email_status.is.null,email_status.neq.bounced")
+    .or("email.ilike.*@*,email_v2.ilike.*@*")
+    .order("last_outreach_at", { ascending: true });
+
+  if (!leads?.length) return [];
+
+  const ids = leads.map((l) => l.id as string);
+
+  // Fetch the earliest sent message per lead for threading.
+  const { data: msgs } = await admin
+    .from("outreach_messages")
+    .select("lead_id, subject, message_id, gmail_thread_id")
+    .in("lead_id", ids)
+    .eq("status", "sent")
+    .eq("email_type", "outreach")
+    .order("sent_at", { ascending: true });
+
+  const originalByLead = new Map<string, { subject: string; message_id: string | null; gmail_thread_id: string | null }>();
+  for (const m of msgs ?? []) {
+    if (!originalByLead.has(m.lead_id)) {
+      originalByLead.set(m.lead_id, {
+        subject: m.subject,
+        message_id: m.message_id,
+        gmail_thread_id: m.gmail_thread_id,
+      });
+    }
+  }
+
+  return leads.flatMap((lead) => {
+    const to = (lead.email ?? (lead as Record<string, unknown>).email_v2) as string | null;
+    if (!to?.includes("@")) return [];
+    const orig = originalByLead.get(lead.id as string);
+    return [{
+      leadId: lead.id as string,
+      username: lead.username as string,
+      email: to,
+      emailSource: (lead.email
+        ? (lead as Record<string, unknown>).email_provider
+        : (lead as Record<string, unknown>).email_v2_provider) as string | null,
+      score: lead.overall_score != null ? Number(lead.overall_score) : null,
+      status: lead.status as string,
+      niche: lead.niche as string | null,
+      subject: orig ? `Re: ${orig.subject}` : "Re: Quick follow-up",
+      body: FOLLOWUP_BODY,
+      inReplyTo: orig?.message_id ?? null,
+      threadId: orig?.gmail_thread_id ?? null,
+    }];
+  });
+}
+
+// Sends a single follow-up email directly (not via Inngest batch).
+export async function sendFollowup(opts: {
+  leadId: string;
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string | null;
+  threadId?: string | null;
+}): Promise<SendOutreachResponse> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "unauthorized" };
+
+  if (!(await gmailReady())) {
+    return { ok: false, error: "Gmail not connected — set up OAuth in Settings → Outreach." };
+  }
+
+  const admin = createAdminClient();
+  const { data: lead } = await admin
+    .from("leads")
+    .select("id, username, followup_count")
+    .eq("id", opts.leadId)
+    .single();
+
+  if (!lead) return { ok: false, error: "Lead not found." };
+  if ((lead.followup_count ?? 0) > 0) return { ok: false, error: "Follow-up already sent to this lead." };
+
+  const settings = await getSettings();
+  const bodyHtml = textToHtml(opts.body);
+
+  try {
+    const result = await sendEmail({
+      to: opts.to,
+      subject: opts.subject,
+      text: opts.body,
+      html: bodyHtml,
+      replyTo: settings.outreach_reply_to ?? undefined,
+      inReplyTo: opts.inReplyTo ?? undefined,
+      references: opts.inReplyTo ?? undefined,
+      threadId: opts.threadId ?? undefined,
+    });
+
+    await admin.from("outreach_messages").insert({
+      lead_id: opts.leadId,
+      to_email: opts.to,
+      subject: opts.subject,
+      body_text: opts.body,
+      body_html: bodyHtml,
+      status: "sent",
+      message_id: result.messageId,
+      gmail_thread_id: result.threadId,
+      email_type: "followup",
+      sent_by: user.id,
+    });
+
+    await admin.from("leads").update({
+      followup_count: 1,
+      last_followup_at: new Date().toISOString(),
+    }).eq("id", opts.leadId);
+
+    await logCrawl({
+      crawl_job_id: null,
+      profile_username: lead.username,
+      parent_username: null,
+      action: "followup_sent",
+      depth: 0,
+      detail: `To: ${opts.to} · Subject: ${opts.subject}`,
+    });
+
+    revalidatePath("/outreach/followup");
+    revalidatePath("/leads");
+    return { ok: true, message_id: result.messageId };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await admin.from("outreach_messages").insert({
+      lead_id: opts.leadId,
+      to_email: opts.to,
+      subject: opts.subject,
+      body_text: opts.body,
+      body_html: bodyHtml,
+      status: "failed",
+      error: msg,
+      email_type: "followup",
+      sent_by: user.id,
+    });
+    return { ok: false, error: msg };
+  }
+}
+
+// Queues a batch of follow-up emails via Inngest.
+export async function sendFollowupBatchAction(opts: {
+  leads: { id: string; to: string; subject: string; body: string; inReplyTo?: string | null; threadId?: string | null }[];
+  intervalMinutes?: number;
+}): Promise<{ ok: boolean; queued: number; error?: string }> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, queued: 0, error: "unauthorized" };
+
+  if (!(await gmailReady())) {
+    return { ok: false, queued: 0, error: "Gmail not connected — set up OAuth in Settings → Outreach." };
+  }
+
+  const leads = opts.leads
+    .filter((l) => l.id && l.to && l.subject && l.body)
+    .map((l) => ({
+      id: l.id,
+      to: l.to,
+      subject: l.subject,
+      body: l.body,
+      inReplyTo: l.inReplyTo ?? undefined,
+      threadId: l.threadId ?? undefined,
+    }));
+
+  if (!leads.length) return { ok: true, queued: 0 };
+
+  await inngest.send({
+    name: "outreach/followup-batch.requested",
+    data: { leads, interval_minutes: opts.intervalMinutes ?? 20 },
+  });
+
+  return { ok: true, queued: leads.length };
+}
+
+export type FollowupBatchProgress = {
+  sent: number;
+  pending: number;
+  failed: number;
+  isActive: boolean;
+  intervalMinutes: number;
+  recentLogs: { id: string; profile_username: string; action: string; detail: string | null; created_at: string }[];
+};
+
+export async function getFollowupBatchProgress(): Promise<FollowupBatchProgress> {
+  const admin = createAdminClient();
+  const INTERVAL_MINUTES = 20;
+
+  const [
+    { count: sent },
+    { count: pending },
+    { count: failed },
+    { data: recentLogs },
+    { data: lastLog },
+  ] = await Promise.all([
+    admin.from("leads").select("id", { count: "exact", head: true }).gte("followup_count", 1),
+    admin.from("leads").select("id", { count: "exact", head: true })
+      .gte("outreach_count", 1)
+      .eq("followup_count", 0)
+      .or("email_status.is.null,email_status.neq.bounced")
+      .or("email.ilike.*@*,email_v2.ilike.*@*"),
+    admin.from("outreach_messages").select("id", { count: "exact", head: true })
+      .eq("email_type", "followup")
+      .eq("status", "failed"),
+    admin.from("crawl_logs").select("id, profile_username, action, detail, created_at")
+      .in("action", ["followup_sent", "followup_failed"])
+      .order("created_at", { ascending: false })
+      .limit(50),
+    admin.from("crawl_logs").select("created_at")
+      .in("action", ["followup_sent", "followup_failed"])
+      .order("created_at", { ascending: false })
+      .limit(1),
+  ]);
+
+  const lastAt = lastLog?.[0]?.created_at ? new Date(lastLog[0].created_at).getTime() : null;
+  const isActive = lastAt != null && Date.now() - lastAt < (INTERVAL_MINUTES + 5) * 60 * 1000;
+
+  return {
+    sent: sent ?? 0,
+    pending: pending ?? 0,
+    failed: failed ?? 0,
+    isActive,
+    intervalMinutes: INTERVAL_MINUTES,
+    recentLogs: recentLogs ?? [],
+  };
 }

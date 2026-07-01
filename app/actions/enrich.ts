@@ -78,3 +78,75 @@ export async function enrichLeadsBulk(
   revalidatePath("/leads");
   return { ok: true, queued: ids.length };
 }
+
+// ── V2 pipeline validation ──────────────────────────────────────────────────
+// Cohort: qualified leads that haven't been contacted yet, where V1 already
+// ran and failed to find an email. This is the population worth re-checking
+// with the V2 pipeline (IG bio → YouTube About → IG mobile contact button).
+function v2ValidationCohort() {
+  return createAdminClient()
+    .from("leads")
+    .select("id, username, email_v2, email_v2_status, email_v2_provider, email_v2_error, email_v2_enriched_at")
+    .eq("status", "qualified")
+    .eq("outreach_count", 0)
+    .is("email", null)
+    .not("enriched_at", "is", null);
+}
+
+export type V2ValidationStatus = {
+  cohortSize: number;
+  queued: number; // not yet run through V2
+  ran: number;
+  found: number;
+  notFound: number;
+  hitRate: number; // 0-100
+  byProvider: Record<string, number>;
+  errorSamples: string[];
+};
+
+export async function getV2ValidationStatus(): Promise<V2ValidationStatus> {
+  const { data } = await v2ValidationCohort();
+  const rows = data ?? [];
+
+  const ran = rows.filter((r) => r.email_v2_enriched_at);
+  const found = ran.filter((r) => r.email_v2_status === "found");
+  const notFound = ran.filter((r) => r.email_v2_status !== "found");
+
+  const byProvider: Record<string, number> = {};
+  for (const r of found) {
+    const p = (r.email_v2_provider as string) ?? "unknown";
+    byProvider[p] = (byProvider[p] ?? 0) + 1;
+  }
+
+  const errorSamples = Array.from(
+    new Set(notFound.map((r) => (r.email_v2_error as string | null)?.split(" · ")[0] ?? "").filter(Boolean)),
+  ).slice(0, 5);
+
+  return {
+    cohortSize: rows.length,
+    queued: rows.length - ran.length,
+    ran: ran.length,
+    found: found.length,
+    notFound: notFound.length,
+    hitRate: ran.length > 0 ? Math.round((found.length / ran.length) * 1000) / 10 : 0,
+    byProvider,
+    errorSamples,
+  };
+}
+
+export async function runV2ValidationBatch(): Promise<{ ok: boolean; queued: number; error?: string }> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, queued: 0, error: "unauthorized" };
+
+  const { data } = await v2ValidationCohort();
+  const ids = (data ?? []).filter((r) => !r.email_v2_enriched_at).map((r) => r.id as string);
+  if (ids.length === 0) return { ok: true, queued: 0 };
+
+  await inngest.send(
+    ids.map((lead_id) => ({ name: "lead/email-v2.enrich.requested" as const, data: { lead_id } })),
+  );
+
+  revalidatePath("/email-lab");
+  return { ok: true, queued: ids.length };
+}

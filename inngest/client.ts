@@ -43,6 +43,11 @@ type Events = {
       crawl_job_id?: string | null;
     };
   };
+  "lead/email-v2.enrich.requested": {
+    data: {
+      lead_id: string;
+    };
+  };
   "leads/backfill.metadata.requested": {
     data: {
       usernames: string[];
@@ -60,6 +65,12 @@ type Events = {
   "outreach/batch.requested": {
     data: {
       leads: { id: string; subject: string; body: string }[];
+      interval_minutes?: number;
+    };
+  };
+  "outreach/followup-batch.requested": {
+    data: {
+      leads: { id: string; to: string; subject: string; body: string; inReplyTo?: string; threadId?: string }[];
       interval_minutes?: number;
     };
   };

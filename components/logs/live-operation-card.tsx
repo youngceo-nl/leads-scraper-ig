@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { CheckCircle2, Clock, Cpu, Zap, AlertTriangle } from "lucide-react";
-import { getOperationStatus, type OperationStatus } from "@/app/actions/leads";
+import { CheckCircle2, Clock, Cpu, Zap, AlertTriangle, X } from "lucide-react";
+import { getOperationStatus, dismissStalledBackfill, type OperationStatus } from "@/app/actions/leads";
 
 const OPERATION_LABELS: Record<string, string> = {
   backfill: "Backfilling metadata",
@@ -24,6 +24,7 @@ function etaLabel(min: number | null): string | null {
 export function LiveOperationCard() {
   const [status, setStatus] = useState<OperationStatus | null>(null);
   const [hadActivity, setHadActivity] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   // Track last time we saw progress to detect stalled state
   const [lastProgressAt, setLastProgressAt] = useState<number | null>(null);
 
@@ -45,6 +46,7 @@ export function LiveOperationCard() {
     return () => clearInterval(id);
   }, [poll]);
 
+  if (dismissed) return null;
   if (!status || (!status.isRunning && !status.operation && !hadActivity)) return null;
 
   const pct = status.total > 0 ? Math.min(100, Math.round((status.succeeded / status.total) * 100)) : 0;
@@ -91,12 +93,22 @@ export function LiveOperationCard() {
             </span>
           )}
         </div>
-        {methodLabel && (
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Cpu className="h-3 w-3" />
-            {methodLabel}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {methodLabel && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Cpu className="h-3 w-3" />
+              {methodLabel}
+            </div>
+          )}
+          {stalled && (
+            <button
+              onClick={async () => { await dismissStalledBackfill(); setDismissed(true); }}
+              className="text-xs text-yellow-700 hover:text-yellow-900 flex items-center gap-0.5 underline underline-offset-2"
+            >
+              <X className="h-3 w-3" /> Dismiss
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats row */}
