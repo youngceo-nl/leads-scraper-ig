@@ -6,7 +6,7 @@
     "predev": "node --env-file-if-exists=.env.local scripts/reset-stuck-jobs.mjs",
     "dev": "concurrently -k -n next,inngest,telegram -c cyan,magenta,yellow \"npm:dev:web\" \"npm:dev:inngest\" \"npm:dev:telegram\"",
     "dev:telegram": "node scripts/telegram-poll.mjs",
-    "dev:web": "next dev -p 3000",
+    "dev:web": "next dev --turbopack -p 3000",
     "dev:inngest": "inngest dev -u http://localhost:3000/api/inngest",
     "build": "next build",
     "start": "next start",

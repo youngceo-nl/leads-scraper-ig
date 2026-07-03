@@ -7,6 +7,7 @@ const OPERATION_LABELS: Record<string, string> = {
   backfill: "Backfilling metadata",
   analyze: "Analyzing leads",
   crawl: "Scraping following list",
+  skool: "Importing from Skool CSV",
 };
 
 const METHOD_LABELS: Record<string, string> = {

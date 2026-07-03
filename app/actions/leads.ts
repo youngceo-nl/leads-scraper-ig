@@ -741,8 +741,12 @@ export async function getOperationStatus(): Promise<OperationStatus> {
 
   const analyzeRunning = (recentPendingUpdates ?? 0) > 0 && (pendingCount ?? 0) > 0;
 
+  const skoolJustFinished = !!skoolJob && skoolJob.status === "completed" && !!skoolJob.finished_at && skoolJob.finished_at >= FIVE_MIN;
+  const skoolRunning = !!skoolJob && (skoolJob.status === "running" || skoolJustFinished);
+
   let operation: OperationStatus["operation"] = null;
   if (backfillRunning || startingUp) operation = "backfill";
+  else if (skoolRunning) operation = "skool";
   else if (analyzeRunning) operation = "analyze";
   else if (recentLog && (remainingCount ?? 0) === 0) operation = "backfill";
 
@@ -752,8 +756,30 @@ export async function getOperationStatus(): Promise<OperationStatus> {
   let total: number;
   let method: string | null;
 
-  if (operation === "analyze") {
-    const analyzeJob = analyzeJobs?.[0] ?? null;
+  let perMin = 0;
+  let etaMin: number | null = null;
+
+  if (operation === "skool") {
+    // skool-import bumps these counters itself as it goes — no extra queries needed.
+    const total_ = skoolJob!.expected_profiles ?? 0;
+    succeeded = skoolJob!.profiles_scraped ?? 0;
+    failed = skoolJob!.rejected_count ?? 0;
+    total = total_;
+    remaining = Math.max(total_ - succeeded, 0);
+    method = null;
+
+    // Rate from a short recent window (not the whole job) so it reflects
+    // current throughput, not a stale average from when the batch started.
+    const THREE_MIN_AGO = new Date(Date.now() - 3 * 60_000).toISOString();
+    const { count: recentProcessed } = await sb
+      .from("crawl_logs")
+      .select("*", { count: "exact", head: true })
+      .eq("crawl_job_id", skoolJob!.id)
+      .like("action", "skool_%")
+      .gte("created_at", THREE_MIN_AGO);
+    perMin = (recentProcessed ?? 0) / 3;
+    etaMin = perMin > 0 && remaining > 0 ? Math.round(remaining / perMin) : null;
+  } else if (operation === "analyze") {
     // Each lead the batch touches writes exactly one row: a crawl_log entry
     // on normal completion (scored or filtered out), or an error_log entry
     // if it threw (e.g. the AI provider is down/out of quota) and got stuck
@@ -785,14 +811,14 @@ export async function getOperationStatus(): Promise<OperationStatus> {
   }
 
   return {
-    isRunning: backfillRunning || analyzeRunning,
+    isRunning: backfillRunning || analyzeRunning || skoolRunning,
     operation,
     method,
     succeeded,
     failed,
     remaining,
     total,
-    perMin: 0,
-    etaMin: null,
+    perMin,
+    etaMin,
   };
 }
