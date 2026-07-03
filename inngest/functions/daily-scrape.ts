@@ -60,11 +60,11 @@ export const dailyScrape = inngest.createFunction(
             seed_id: seed.id,
             seed_username: seed.username,
             status: "queued",
-            max_depth: settings.max_crawl_depth ?? 1,
+            max_depth: 1,
           })
           .select("id")
           .single();
-        return data;
+        return { data };
       });
 
       if (!job?.id) continue;

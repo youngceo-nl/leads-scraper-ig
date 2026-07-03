@@ -99,7 +99,7 @@ export async function runActorSync<T = unknown>(opts: RunActorOptions): Promise<
   } = opts;
 
   const url = new URL(`${APIFY_BASE}/acts/${actorId}/run-sync-get-dataset-items`);
-  url.searchParams.set("token", token);
+  url.searchParams.set("token", Array.isArray(token) ? token[0] : token);
   url.searchParams.set("timeout", String(Math.min(timeoutSecs, 280))); // cap at 280s to avoid 403
   url.searchParams.set("memory", String(memoryMbytes));
   url.searchParams.set("format", "json");
