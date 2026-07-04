@@ -1,5 +1,6 @@
 node_modules
 .next
+.next.corrupted-*
 .env*
 !.env.local.example
 .DS_Store
