@@ -4,24 +4,29 @@ import { z } from "zod";
 import type { AiClassification } from "@/lib/scoring/types";
 import type { ScrapedProfile } from "@/lib/types";
 
-const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS ONLY.
+const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS and AD/SALES AGENCIES.
 
 An infopreneur sells KNOWLEDGE or EXPERTISE as a digital product (course, coaching program, mastermind, consulting) to a B2C audience. They close sales via DMs, calls, or webinars — not a checkout button.
 
-DEFAULT RULE: Assume "weak" unless there is explicit evidence of an info/knowledge business. High engagement, a big following, or a link in bio are NOT enough on their own.
+An ad/sales agency sells marketing, advertising, or sales services (media buying, funnel building, appointment setting, lead generation, SMMA, sales consulting) to OTHER BUSINESSES (B2B). They typically show client results, case studies, or a "DM to work with us" / "book a call" offer.
+
+DEFAULT RULE: Assume "weak" unless there is explicit evidence of an info/knowledge business OR an ad/sales agency with a visible B2B offer. High engagement, a big following, or a link in bio are NOT enough on their own.
 
 icp_signal:
-- "strong": account clearly sells a digital knowledge product — bio/captions mention coaching program, course, mastermind, DM to apply, book a call, webinar, or show client results/revenue proof
-- "moderate": account is in the right INDUSTRY (education, coaching, consulting) but the offer or price point is unclear — e.g., educates in their niche but no paid product is obvious
+- "strong": account clearly sells a digital knowledge product — bio/captions mention coaching program, course, mastermind, DM to apply, book a call, webinar, or show client results/revenue proof — OR is an ad/sales agency with visible client results, case studies, testimonials, or a clear "DM/book a call to work with us" offer
+- "moderate": account is in the right INDUSTRY (education, coaching, consulting, or a marketing/ad/sales agency) but the offer or proof is unclear — e.g., educates in their niche or runs an agency but no paid product / client results are obvious
 - "weak": EVERYTHING ELSE — this includes:
   • Any physical product brand (food, candy, clothing, beauty, supplements, DTC, merch) — even if the founder is an "influencer"
-  • Service businesses (restaurant, salon, agency, contractor, transport)
+  • Service businesses unrelated to marketing/sales (restaurant, salon, contractor, transport)
+  • Agencies with no visible client results, case studies, or B2B offer — just a name/logo
   • B2B SaaS or software
   • Pure content creators, entertainers, meme pages, news accounts
   • Influencers whose only monetisation is affiliate links or brand deals
   • Brands that sell via an online store / checkout button
 
 When in doubt, use "weak". Engagement and follower count do not affect icp_signal.
+
+business_model must be EXACTLY one of: course, coaching, agency, ecom, saas, creator, unknown — never invent other values (e.g. "service"). Use "agency" for any service-based business, including ad/sales/marketing agencies.
 
 Output STRICT JSON only — no prose, no markdown, no code fences. Match this shape exactly:
 {

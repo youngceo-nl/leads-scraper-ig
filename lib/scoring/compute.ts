@@ -58,8 +58,8 @@ function monetizationScore(c: AiClassification, profile: ScrapedProfile): number
     case "low":    s += 1; break;
     case "none":   break;
   }
-  if (["course", "coaching"].includes(c.business_model)) s += 2;
-  else if (["agency", "saas", "ecom"].includes(c.business_model)) s += 0.5;
+  if (["course", "coaching", "agency"].includes(c.business_model)) s += 2;
+  else if (["saas", "ecom"].includes(c.business_model)) s += 0.5;
   else if (c.business_model === "creator") s += 0.5;
   return CLAMP(s);
 }
