@@ -1,4 +1,12 @@
-# Ideal Customer Profile — Conversion Brands Webinar Offer
+# Ideal Customer Profiles (ICPs)
+
+The lead scoring system (`lib/*/classify.ts`, `lib/scoring/compute.ts`) scores every scraped profile
+against **two** ICPs below. Keep this doc in sync with the actual prompts — the prompts are the
+source of truth for what the AI scores against; this doc explains *why*.
+
+---
+
+# ICP #1 — Infopreneurs / High-Ticket Coaches
 
 Source: https://webinar-offer-site.vercel.app/
 Saved for use when tuning the lead scoring system.
@@ -103,3 +111,43 @@ When evaluating Instagram profiles against this ICP, weight these signals highly
 - Accounts with very high followers but no engagement (bought following)
 - Offers under $500 with no upsell signal
 - Purely B2B (we target B2C coaches)
+
+---
+
+# ICP #2 — Ad/Sales Agencies
+
+Added when the ICP was broadened to include B2B service agencies alongside infopreneurs.
+Source of truth: `lib/groq/classify.ts` (identical prompt in `lib/claude/classify.ts`,
+`lib/gemini/classify.ts`, `lib/openai/classify.ts`).
+
+## Who We're Looking For
+
+An **ad/sales agency** sells marketing, advertising, or sales services — media buying, funnel
+building, appointment setting, lead generation, SMMA, sales consulting — to **other businesses
+(B2B)**, not consumers.
+
+## Scoring Signals
+
+| icp_signal | Criteria |
+|---|---|
+| **strong** | Visible client results, case studies, testimonials, or a clear "DM/book a call to work with us" offer |
+| **moderate** | Right industry (marketing/ad/sales agency) but the offer or proof is unclear — no visible client results |
+| **weak / reject** | Agency with no visible client results, case studies, or B2B offer — just a name/logo, or a service business unrelated to marketing/sales (restaurant, salon, contractor, transport) |
+
+**business_model mapping:** `agency` (same enum value as any other service-based business — the
+classify prompt explicitly instructs the model to use `agency` for ad/sales/marketing agencies
+rather than inventing a separate category).
+
+**Scoring weight:** `lib/scoring/compute.ts` scores `agency` at the same monetization weight as
+`course`/`coaching` (+2), up from an earlier +0.5 — an agency with strong signals scores comparably
+to an infopreneur, not as an afterthought.
+
+---
+
+## How to View These Leads Today
+
+No dedicated "ICP type" filter exists in the leads UI (`components/leads/filter-bar.tsx`) — use the
+existing `business_model` and `status` filters to separate the two ICPs:
+
+- **ICP #1 (Infopreneurs):** `business_model` = `course` or `coaching`, `status` = `qualified` or `review`
+- **ICP #2 (Ad/Sales Agencies):** `business_model` = `agency`, `status` = `qualified` or `review`
