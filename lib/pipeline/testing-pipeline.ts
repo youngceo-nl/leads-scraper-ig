@@ -150,6 +150,9 @@ export async function testingEnrichPipeline(opts: {
     let ytCookie = ytCookiePool[0] ?? "";
 
     const ytProxy = process.env.YT_REVEAL_PROXY || null;
+    // When a persistent Chrome profile is configured, the browser handles DBSC
+    // natively — no need to inject (DBSC-bound) cookies that cause HTTP 500.
+    const ytProfilePath = process.env.YT_BROWSER_PROFILE_PATH || null;
     let mintedThisRun = false;
 
     if (youtubeLoginConfigured(settings)) {
@@ -162,15 +165,15 @@ export async function testingEnrichPipeline(opts: {
       }
     }
 
-    let attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytCookie, capsolverKey, proxy: ytProxy });
+    let attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytCookie, capsolverKey, proxy: ytProxy, profilePath: ytProfilePath });
 
-    // One auto-refresh if the cookie was rejected.
-    if (attempt.authFailed && youtubeLoginConfigured(settings) && !mintedThisRun) {
+    // One auto-refresh if the cookie was rejected (only relevant when not using a persistent profile).
+    if (attempt.authFailed && !ytProfilePath && youtubeLoginConfigured(settings) && !mintedThisRun) {
       const refreshed = await refreshAndSaveYoutubeCookie();
       if (refreshed.cookie) {
         ytCookie = refreshed.cookie;
         steps.push("yt_cookie_refresh: ok");
-        attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytCookie, capsolverKey, proxy: ytProxy });
+        attempt = await attemptYoutubeEmail({ channelUrl: youtubeUrl, googleCookie: ytCookie, capsolverKey, proxy: ytProxy, profilePath: ytProfilePath });
       } else {
         steps.push(`yt_cookie_refresh: ${refreshed.error}`);
       }

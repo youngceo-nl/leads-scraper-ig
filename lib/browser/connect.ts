@@ -5,6 +5,11 @@
 // or a Browserbase / Browserless cloud connect URL. When it's unset we launch
 // Chromium locally (dev / worker with a browser installed).
 //
+// Set YT_BROWSER_PROFILE_PATH to a directory created by login-automation.mjs
+// to reuse a persistent Chrome session — this avoids Google's Device-Bound
+// Session Credentials (DBSC) check that causes HTTP 500 when injected cookies
+// are used in a fresh browser process.
+//
 // Playwright is imported dynamically so it never lands in the serverless bundle.
 
 import type { Browser, BrowserContext } from "playwright";
@@ -17,6 +22,7 @@ export async function connectBrowser(opts: {
   args?: string[]; // extra Chromium launch flags (local-launch only)
   channel?: string; // prefer a real browser channel (e.g. "chrome"); falls back to bundled Chromium
   contextOptions?: Parameters<Browser["newContext"]>[0];
+  profilePath?: string; // reuse a persistent Chrome profile (avoids DBSC cookie-injection failures)
 }): Promise<ConnectResult> {
   const { chromium } = await import("playwright");
   const endpoint = process.env.BROWSER_WS_ENDPOINT;
@@ -30,10 +36,27 @@ export async function connectBrowser(opts: {
     return { browser, context, isRemote: true };
   }
 
+  const proxyOpts = opts.proxy ? { proxy: { server: opts.proxy } } : {};
+  const baseArgs = opts.args ?? [];
+
+  // Persistent profile mode: Chrome owns the DBSC device keys so the session
+  // transfers seamlessly — no cookie injection needed. launchPersistentContext
+  // returns the BrowserContext directly; browser() is always non-null for local.
+  if (opts.profilePath) {
+    const context = await chromium.launchPersistentContext(opts.profilePath, {
+      headless: opts.headless ?? true,
+      channel: opts.channel as string | undefined,
+      args: baseArgs,
+      ...proxyOpts,
+      ...(opts.contextOptions ?? {}),
+    });
+    return { browser: context.browser()!, context, isRemote: false };
+  }
+
   const launchOpts = {
     headless: opts.headless ?? true,
-    ...(opts.proxy ? { proxy: { server: opts.proxy } } : {}),
-    ...(opts.args ? { args: opts.args } : {}),
+    ...proxyOpts,
+    ...(baseArgs.length ? { args: baseArgs } : {}),
   };
   // A real browser channel (Chrome) is far less likely to be served logged-out /
   // bot-blocked than bundled Chromium. Fall back to Chromium if it isn't installed.

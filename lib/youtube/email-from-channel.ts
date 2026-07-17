@@ -26,12 +26,13 @@ export async function attemptYoutubeEmail(opts: {
   googleCookie: string;
   capsolverKey: string;
   proxy?: string | null;
+  profilePath?: string | null; // persistent Chrome profile to avoid DBSC failures
 }): Promise<YtAttempt> {
-  const { channelUrl, googleCookie, capsolverKey, proxy = null } = opts;
+  const { channelUrl, googleCookie, capsolverKey, proxy = null, profilePath = null } = opts;
   const trace: string[] = [];
 
-  if (!googleCookie) {
-    return { email: null, provider: null, trace: ["yt_cookie_scrape: skipped (no YT cookie)"], youtubeError: null, authFailed: false, updatedCookie: null };
+  if (!googleCookie && !profilePath) {
+    return { email: null, provider: null, trace: ["yt_cookie_scrape: skipped (no YT cookie or profile)"], youtubeError: null, authFailed: false, updatedCookie: null };
   }
 
   let youtubeError: string | null = null;
@@ -53,7 +54,7 @@ export async function attemptYoutubeEmail(opts: {
   if (capsolverKey) {
     try {
       const { revealYoutubeEmail } = await import("@/lib/youtube/reveal-email");
-      const revealed = await revealYoutubeEmail({ channelUrl, googleCookie, capsolverKey, proxy });
+      const revealed = await revealYoutubeEmail({ channelUrl, googleCookie, capsolverKey, proxy, profilePath });
       if (revealed.email) {
         trace.push("yt_capsolver: found");
         return { email: revealed.email, provider: "youtube_about_gated", trace, youtubeError: null, authFailed: false, updatedCookie };

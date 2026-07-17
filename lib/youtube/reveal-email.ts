@@ -26,11 +26,12 @@ export type RevealResult = {
 
 export type RevealOpts = {
   channelUrl: string;
-  googleCookie: string; // Cookie header from a logged-in youtube.com session
+  googleCookie: string; // Cookie header from a logged-in youtube.com session (ignored when profilePath is set)
   capsolverKey: string;
   proxy?: string | null; // "http://user:pass@host:port"
   headless?: boolean; // default true
   timeoutMs?: number; // per-step nav timeout, default 30s
+  profilePath?: string | null; // persistent Chrome profile dir — skips cookie injection, avoids DBSC 500s
 };
 
 const UA =
@@ -39,23 +40,24 @@ const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 const NOISE_DOMAINS = ["youtube.com", "google.com", "gstatic.com", "googleapis.com", "schema.org"];
 
 export async function revealYoutubeEmail(opts: RevealOpts): Promise<RevealResult> {
-  const { channelUrl, googleCookie, capsolverKey, proxy = null, headless = true, timeoutMs = 30_000 } = opts;
+  const { channelUrl, googleCookie, capsolverKey, proxy = null, headless = true, timeoutMs = 30_000, profilePath = null } = opts;
   if (!channelUrl) return fail("missing channelUrl");
-  if (!googleCookie) return fail("missing googleCookie (must be a logged-in session)");
+  if (!profilePath && !googleCookie) return fail("missing googleCookie (must be a logged-in session)");
   if (!capsolverKey) return fail("missing capsolverKey");
 
   const aboutUrl = channelUrl.replace(/\/+$/, "").replace(/\/about$/i, "") + "/about";
 
-  // Local launch (real Chrome when available), or a remote/hosted Chromium when
-  // BROWSER_WS_ENDPOINT is set. Chrome + the stealth flags below make YouTube far
-  // more likely to render the *signed-in* About page for a valid cookie instead
-  // of its logged-out "Sign in to see email address" variant under automation.
+  // When a persistent profile path is configured (set via YT_BROWSER_PROFILE_PATH
+  // or passed directly), reuse it to avoid Google's Device-Bound Session Credentials
+  // (DBSC) check. The profile was created by login-automation.mjs using bundled
+  // Chromium, so we use the same Chromium build here (no channel override).
   const { browser } = await connectBrowser({
     headless,
     proxy,
-    channel: "chrome",
+    channel: profilePath ? undefined : "chrome",
     args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"],
     contextOptions: { userAgent: UA, locale: "en-US", viewport: { width: 1280, height: 900 } },
+    profilePath: profilePath ?? undefined,
   });
 
   try {
@@ -68,9 +70,13 @@ export async function revealYoutubeEmail(opts: RevealOpts): Promise<RevealResult
       Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
       (window as unknown as { chrome?: unknown }).chrome ??= { runtime: {} };
     });
-    const cookieLoad = await addCookiesResilient(context, parseCookies(googleCookie));
-    if (cookieLoad.skipped.length) {
-      console.warn(`[yt-reveal] skipped ${cookieLoad.skipped.length} malformed cookie(s): ${cookieLoad.skipped.join(", ")}`);
+    // Skip cookie injection when using a persistent profile — the session is already
+    // stored natively and injecting DBSC-bound cookies would cause HTTP 500.
+    if (!profilePath && googleCookie) {
+      const cookieLoad = await addCookiesResilient(context, parseCookies(googleCookie));
+      if (cookieLoad.skipped.length) {
+        console.warn(`[yt-reveal] skipped ${cookieLoad.skipped.length} malformed cookie(s): ${cookieLoad.skipped.join(", ")}`);
+      }
     }
     const page = await context.newPage();
 
