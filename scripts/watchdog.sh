@@ -10,15 +10,15 @@ set -uo pipefail
 # unless we add them explicitly.
 export PATH="/Users/tokki/.nvm/versions/node/v24.11.1/bin:/usr/local/bin:/usr/bin:/bin"
 
-REPO_DIR="/Users/tokki/Documents/Files/repositories/leads-scraper-ig"
+REPO_DIR="/Users/tokki/Documents/Files/repositories/email-outbound"
 cd "$REPO_DIR"
 
 ENV_FILE="$REPO_DIR/.env.local"
 BOT_TOKEN=$(grep '^TELEGRAM_ALERTS_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 CHAT_ID=$(grep '^TELEGRAM_ALERT_CHAT_ID=' "$ENV_FILE" | cut -d= -f2-)
-STATE_FILE="/tmp/leads-scraper-watchdog.state"
+STATE_FILE="/tmp/email-outbound-watchdog.state"
 HEALTH_URL="http://localhost:3000/api/inngest"
-LOG_FILE="/tmp/leads-scraper-dev.log"
+LOG_FILE="/tmp/email-outbound-dev.log"
 
 send_alert() {
   local text="$1"
@@ -39,7 +39,7 @@ prev_state="up"
 
 if is_up; then
   if [ "$prev_state" = "down" ]; then
-    send_alert "✅ leads-scraper-ig dev server is back up."
+    send_alert "✅ email-outbound dev server is back up."
   fi
   echo "up" > "$STATE_FILE"
   exit 0
@@ -48,7 +48,7 @@ fi
 # Only alert on the up->down transition, not every check, so a sustained
 # outage doesn't spam the chat every couple of minutes.
 if [ "$prev_state" = "up" ]; then
-  send_alert "🔴 leads-scraper-ig dev server is DOWN. Attempting auto-restart..."
+  send_alert "🔴 email-outbound dev server is DOWN. Attempting auto-restart..."
 fi
 echo "down" > "$STATE_FILE"
 
@@ -61,8 +61,8 @@ disown
 sleep 20
 
 if is_up; then
-  send_alert "✅ leads-scraper-ig dev server auto-restarted successfully."
+  send_alert "✅ email-outbound dev server auto-restarted successfully."
   echo "up" > "$STATE_FILE"
 else
-  send_alert "⚠️ leads-scraper-ig auto-restart FAILED — needs manual attention. Check $LOG_FILE"
+  send_alert "⚠️ email-outbound auto-restart FAILED — needs manual attention. Check $LOG_FILE"
 fi

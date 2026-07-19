@@ -58,7 +58,7 @@ const isDev =
     : !process.env.INNGEST_EVENT_KEY;
 
 export const inngest = new Inngest({
-  id: "leads-scraper-ig",
+  id: "email-outbound",
   schemas: new EventSchemas().fromRecord<Events>(),
   isDev,
 });
