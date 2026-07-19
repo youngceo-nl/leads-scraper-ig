@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, Users, Settings, Sprout, LogOut, Activity, MailCheck } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Sprout, LogOut, Activity, MailCheck, Handshake } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
 import { ActivityDrawerButton } from "@/components/logs/activity-drawer";
 
@@ -7,6 +7,7 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/seeds", label: "Source Accounts", icon: Sprout },
   { href: "/leads", label: "Leads", icon: Users },
+  { href: "/handover", label: "Handover", icon: Handshake },
   { href: "/outreach-ready", label: "Outreach Ready", icon: MailCheck },
   { href: "/logs", label: "Pipeline", icon: Activity },
   { href: "/settings", label: "Settings", icon: Settings },
