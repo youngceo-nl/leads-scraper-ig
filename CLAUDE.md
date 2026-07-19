@@ -1,4 +1,4 @@
-# leads-scraper-ig
+# email-outbound
 
 ## Supabase access
 

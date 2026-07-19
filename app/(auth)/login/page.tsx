@@ -44,7 +44,7 @@ function LoginInner() {
     <div className="min-h-screen flex items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Leads Scraper</CardTitle>
+          <CardTitle>Email Outbound</CardTitle>
           <CardDescription>{mode === "signin" ? "Sign in to continue" : "Create an account"}</CardDescription>
         </CardHeader>
         <CardContent>

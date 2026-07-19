@@ -88,6 +88,16 @@ export type AppSettings = {
   updated_at: string;
   // Per-key status cache: key is "provider:last12chars", value is last check result
   email_key_statuses: Record<string, EmailKeyStatus>;
+  // Outreach — templates rendered per lead by lib/outreach/template.ts
+  outreach_subject_template: string;
+  outreach_body_template: string;
+  outreach_reply_to: string | null;
+  // Gmail send path. gmail_from_name is the display name on outgoing mail.
+  gmail_from_name: string | null;
+  gmail_oauth_client_id: string | null;
+  gmail_oauth_client_secret: string | null;
+  gmail_oauth_refresh_token: string | null;
+  gmail_oauth_email: string | null;
 };
 
 export type Seed = {
@@ -138,8 +148,41 @@ export type Lead = {
   parent_username: string | null;
   lead_source: string | null;
   backfill_error: string | null;
+  // Email discovery. `email` is the v1 waterfall result; `email_v2` is a
+  // parallel experiment column that was never rolled out (2 rows populated).
+  email: string | null;
+  email_status: string | null;
+  email_provider: string | null;
+  email_v2: string | null;
+  email_v2_status: string | null;
+  email_v2_provider: string | null;
+  // Funnel enrichment — funnel_program_name feeds {{program_name}} in the
+  // outreach subject line, so junk values are visible to the prospect.
+  funnel_program_name: string | null;
+  funnel_offer_summary: string | null;
+  // Outreach counters, maintained application-side (no DB trigger).
+  outreach_count: number;
+  last_outreach_at: string | null;
+  last_outreach_error: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type OutreachMessage = {
+  id: string;
+  lead_id: string;
+  to_email: string;
+  subject: string;
+  body_text: string | null;
+  body_html: string | null;
+  status: "sent" | "failed" | "bounced";
+  message_id: string | null;
+  gmail_thread_id: string | null;
+  error: string | null;
+  sent_by: string | null;
+  sent_at: string;
+  bounced_at: string | null;
+  email_type: "outreach" | "followup";
 };
 
 // Raw scraped profile shape (post-normalization, pre-scoring)

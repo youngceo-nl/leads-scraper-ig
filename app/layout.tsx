@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Leads Scraper",
+  title: "Email Outbound",
   description: "Instagram lead discovery & scoring",
 };
 

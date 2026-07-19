@@ -1,4 +1,4 @@
-# Leads Scraper IG
+# Email Outbound
 
 Automated Instagram lead discovery, scraping, scoring, and management.
 Crawls a seed account → who they follow → recursively into qualified leads → scored by Claude.
