@@ -60,7 +60,6 @@ export type AppSettings = {
   min_followers: number;
   max_followers: number;
   min_engagement_rate: number;
-  min_posts_last_30_days: number;
   min_reels_last_30_days: number;
   include_keywords: string[];
   exclude_keywords: string[];
@@ -106,6 +105,8 @@ export type Seed = {
   profile_url: string;
   notes: string | null;
   max_profiles_to_scrape: number | null;
+  /** Scrape the entire following list, ignoring max_profiles_to_scrape. */
+  scrape_full_following: boolean;
   exhausted_providers: string[];
   created_at: string;
 };

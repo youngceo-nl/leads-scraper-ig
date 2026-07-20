@@ -3,16 +3,21 @@ import { LogsLive } from "@/components/logs/logs-live";
 import { PipelineStats } from "@/components/logs/pipeline-stats";
 import { LiveOperationCard } from "@/components/logs/live-operation-card";
 import { getPipelineStats } from "@/app/actions/leads";
+import { getSeedPipelines } from "@/app/actions/crawl-jobs";
+import { SeedPipelineList } from "@/components/logs/seed-pipeline-card";
 import { Separator } from "@/components/ui/separator";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogsPage() {
   const sb = createAdminClient();
-  const [{ data: crawl }, { data: errors }, stats] = await Promise.all([
+  const [{ data: crawl }, { data: errors }, stats, seedPipelines] = await Promise.all([
     sb.from("crawl_logs").select("*").order("created_at", { ascending: false }).limit(200),
     sb.from("error_logs").select("*").order("created_at", { ascending: false }).limit(100),
     getPipelineStats(),
+    // Empty rather than fatal: a missing counters migration must not take the
+    // whole Activity page down.
+    getSeedPipelines().catch(() => []),
   ]);
 
   return (
@@ -23,6 +28,8 @@ export default async function LogsPage() {
       </div>
 
       <LiveOperationCard />
+
+      <SeedPipelineList initial={seedPipelines} />
 
       <PipelineStats stats={stats} />
 

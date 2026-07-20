@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { hardFilter, metricsGate } from "@/lib/pipeline/filter";
 import { computeMetrics } from "@/lib/pipeline/metrics";
 import { scoreProfileRouted } from "@/lib/scoring/score";
-import { logCrawl, logError } from "@/lib/pipeline/persist";
+import { bumpFunnelCounters, logCrawl, logError } from "@/lib/pipeline/persist";
 import type { ScrapedProfile } from "@/lib/types";
 
 // Light-weight scoring: uses the data the cookie-based backfill already put
@@ -59,7 +59,20 @@ export const scoreLead = inngest.createFunction(
         const sb = createAdminClient();
         await sb
           .from("leads")
-          .update({ status: "rejected", rejection_reason: hard.reason, overall_score: null })
+          .update({
+            status: "rejected",
+            rejection_reason: hard.reason,
+            overall_score: null,
+            // .update() only touches listed columns — a lead re-processed
+            // after an earlier AI pass would otherwise keep that pass's
+            // reason_for_score/recommended_action, making a hard-filter
+            // rejection misread as "went through AI" downstream (the funnel's
+            // `verified` count, in particular, reads reason_for_score as proof
+            // of that). persistLead's full-row upsert never has this problem;
+            // this narrower update needs to null them explicitly instead.
+            reason_for_score: null,
+            recommended_action: null,
+          })
           .eq("id", lead_id);
       });
       await logCrawl({
@@ -88,6 +101,9 @@ export const scoreLead = inngest.createFunction(
             status: "rejected",
             rejection_reason: mg.reason,
             overall_score: null,
+            // Same staleness fix as the hard-filter rejection above.
+            reason_for_score: null,
+            recommended_action: null,
             avg_likes: metrics.avg_likes,
             avg_comments: metrics.avg_comments,
             avg_views: metrics.avg_views,
@@ -108,6 +124,12 @@ export const scoreLead = inngest.createFunction(
       });
       return { status: "rejected", reason: mg.reason };
     }
+
+    // Survived hardFilter and metricsGate — this is the "filtered" stage of the
+    // funnel on the Activity page (accounts that got through, not that were cut).
+    await step.run("bump-filtered", () =>
+      bumpFunnelCounters({ crawl_job_id: crawl_job_id ?? null, filtered: 1 }),
+    );
 
     // AI classification + deterministic scoring
     let scored;
@@ -157,10 +179,18 @@ export const scoreLead = inngest.createFunction(
           overall_score: status === "rejected" ? null : score.overall_score,
           reason_for_score: score.reason_for_score,
           recommended_action: score.recommended_action,
+          // Cleared on a pass, matching process-profile.ts. Without this a lead
+          // that was rejected earlier keeps its stale reason after qualifying,
+          // so the funnel reads "qualified / no_recent_posts".
+          rejection_reason: status === "rejected" ? score.reason_for_score : null,
           status,
         })
         .eq("id", lead_id);
     });
+
+    await step.run("bump-verified", () =>
+      bumpFunnelCounters({ crawl_job_id: crawl_job_id ?? null, verified: 1 }),
+    );
 
     await logCrawl({
       crawl_job_id: crawl_job_id ?? null,

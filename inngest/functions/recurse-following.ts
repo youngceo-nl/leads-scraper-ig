@@ -47,7 +47,7 @@ export const recurseFollowing = inngest.createFunction(
       throw err;
     }
 
-    const inserted = await step.run("bulk-upsert", () =>
+    const { inserted, duplicates, excluded } = await step.run("bulk-upsert", () =>
       bulkUpsertDiscoveredLeads(r.items, {
         crawl_depth: nextDepth,
         source_seed_id: seed_id,
@@ -61,7 +61,7 @@ export const recurseFollowing = inngest.createFunction(
       parent_username: null,
       action: "recursed",
       depth: nextDepth,
-      detail: `provider=${r.provider} total=${r.items.length} inserted_new=${inserted}`,
+      detail: `provider=${r.provider} total=${r.items.length} inserted_new=${inserted} duplicates=${duplicates} excluded=${excluded}`,
     });
 
     if (inserted > 0) {

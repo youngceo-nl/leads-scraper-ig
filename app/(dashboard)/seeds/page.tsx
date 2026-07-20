@@ -6,16 +6,18 @@ import { CrawlJobsList } from "@/components/seeds/crawl-jobs-list";
 import { BioCoverageCard } from "@/components/seeds/bio-coverage";
 import { getSettings } from "@/lib/config/settings";
 import { getBioCoverage } from "@/app/actions/backfill-bios";
+import { getScrapedSeedIds } from "@/lib/seeds/scraped";
 
 export const dynamic = "force-dynamic";
 
 export default async function SeedsPage() {
   const sb = createAdminClient();
-  const [{ data: allSeeds }, { data: jobs }, settings, coverage] = await Promise.all([
+  const [{ data: allSeeds }, { data: jobs }, settings, coverage, scrapedSeedIds] = await Promise.all([
     sb.from("seeds").select("*").order("created_at", { ascending: false }),
     sb.from("crawl_jobs").select("*, seeds(username)").order("created_at", { ascending: false }).limit(15),
     getSettings(),
     getBioCoverage(),
+    getScrapedSeedIds(),
   ]);
 
   const seeds = (allSeeds ?? []).filter((s) => !(s.exhausted_providers as string[])?.includes("cookie"));
@@ -48,6 +50,7 @@ export default async function SeedsPage() {
             exhaustedSeeds={exhaustedSeeds}
             jobs={jobs ?? []}
             defaultLimit={settings.max_profiles_per_account}
+            scrapedSeedIds={[...scrapedSeedIds]}
             systemStatus={{
               igStatus: (() => {
                 const igConfigured = (settings.instagram_accounts ?? []).length > 0 || (settings.instagram_session_cookies ?? []).length > 0 || !!settings.instagram_session_cookie;

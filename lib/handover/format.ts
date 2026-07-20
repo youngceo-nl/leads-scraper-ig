@@ -1,8 +1,5 @@
 // Formatting leads out to Clay and parsing enriched rows back in.
 
-/** Ties an exported row back to its lead on re-import. */
-export const LEAD_ID_COLUMN = "lead_id";
-
 /** The downstream enrichment tool works best in batches of this size. */
 export const BATCH_SIZE = 15;
 
@@ -13,26 +10,12 @@ export type HandoverLead = {
   niche: string | null;
   external_link: string | null;
   profile_url: string | null;
+  bio: string | null;
 };
 
 /**
- * Columns handed to Clay. `lead_id` comes first and must survive the round
- * trip — matching on username instead would misfire the moment Clay rewrites
- * or drops that column, and matching on email is impossible when finding the
- * email is the whole point.
- */
-const EXPORT_COLUMNS = [
-  LEAD_ID_COLUMN,
-  "username",
-  "full_name",
-  "domain",
-  "niche",
-  "profile_url",
-] as const;
-
-/**
- * Bare hostname from a bio link — Clay's email waterfall keys off domain plus
- * full name, and it wants `acme.com`, not `https://acme.com/checkout?ref=ig`.
+ * Bare hostname from a bio link — kept for anywhere that still wants a domain
+ * out of a lead's bio link (not part of the clipboard export any more).
  */
 export function toDomain(link: string | null): string {
   if (!link?.trim()) return "";
@@ -44,24 +27,25 @@ export function toDomain(link: string | null): string {
   }
 }
 
-function toRow(lead: HandoverLead): string[] {
-  return [
-    lead.id,
-    lead.username ?? "",
-    lead.full_name ?? "",
-    toDomain(lead.external_link),
-    lead.niche ?? "",
-    lead.profile_url ?? "",
-  ];
+type ClipboardLead = { full_name: string | null; profile_url: string | null; bio: string | null };
+
+const EXPORT_COLUMNS = ["profile_url", "full_name", "bio"] as const;
+
+function toRow(lead: ClipboardLead): string[] {
+  return [lead.profile_url ?? "", lead.full_name ?? "", lead.bio ?? ""];
 }
 
 /**
  * Tab-separated, because that is what pasting into a Clay table (or any
- * spreadsheet) expects. Tabs and newlines inside a value would break the row
- * apart, so they collapse to spaces rather than being quoted — quoting is a
- * CSV convention that clipboard paste does not honour.
+ * spreadsheet) expects. Tabs and newlines inside a value (bios especially)
+ * would break the row apart, so they collapse to spaces rather than being
+ * quoted — quoting is a CSV convention that clipboard paste does not honour.
+ *
+ * No bare username column — `profile_url` is what carries identity forward
+ * for the round trip instead (see `parseEnrichedCsv`, which extracts the
+ * handle back out of it), since the operator only wants url/name/bio visible.
  */
-export function toClipboardTsv(leads: HandoverLead[]): string {
+export function toClipboardText(leads: ClipboardLead[]): string {
   const clean = (value: string) => value.replace(/[\t\r\n]+/g, " ").trim();
   return [
     EXPORT_COLUMNS.join("\t"),
@@ -126,29 +110,57 @@ function pick(row: CsvRow, candidates: string[]): string | null {
   return null;
 }
 
-export type EnrichedRow = { leadId: string; email: string | null };
+export type EnrichedRow = { username: string; email: string | null };
+
+const USERNAME_COLUMNS = [
+  "username", "handle", "instagram", "ig", "ig_handle", "instagram_handle",
+  // The export no longer includes a bare username column — profile_url is the
+  // identifying column that survives the round trip, so it has to be a
+  // candidate too. Tried after the handle-shaped ones since those are
+  // unambiguous; a URL still needs IG_PROFILE_RE to pull the handle out of it.
+  "profile_url", "instagram_url", "ig_url",
+];
+
+/**
+ * `@handle` or a full profile URL both reduce to the bare handle — mirrors
+ * `resolveUsername` in app/actions/leads.ts, since Clay may echo back either
+ * shape depending on how the sheet was set up.
+ */
+const IG_PROFILE_RE = /instagram\.com\/([a-zA-Z0-9_.]{1,30})\/?/;
+function normalizeUsername(raw: string): string | null {
+  const direct = raw.trim().replace(/^@/, "").toLowerCase();
+  if (direct && /^[a-z0-9._]{1,30}$/.test(direct)) return direct;
+  const fromUrl = raw.match(IG_PROFILE_RE)?.[1]?.toLowerCase();
+  return fromUrl ?? null;
+}
 
 /**
  * Parses a returned Clay export. Rows without an email are kept rather than
  * dropped: they are how we learn Clay found nothing for that lead, which is a
  * result worth recording so the lead doesn't cycle back into the pool forever.
+ *
+ * Matched back to leads by username (unique in the leads table) rather than a
+ * hidden id column. The clipboard export carries no bare username column —
+ * only `profile_url` — so the handle is pulled back out of that URL
+ * (`normalizeUsername`) unless a username/handle-shaped column happens to
+ * come back too.
  */
 export function parseEnrichedCsv(text: string): EnrichedRow[] {
   const rows = parseCsv(text.trim());
   if (!rows.length) throw new HandoverCsvError("The CSV has no data rows.");
 
-  if (!rows.some((row) => pick(row, [LEAD_ID_COLUMN]))) {
+  if (!rows.some((row) => pick(row, USERNAME_COLUMNS))) {
     throw new HandoverCsvError(
-      `The CSV has no "${LEAD_ID_COLUMN}" column. Export from Clay with that column intact — ` +
-        "it is the only way rows can be matched back to leads.",
+      'The CSV has no "profile_url" (or username/handle) column. It is the only way rows can be matched back to leads.',
     );
   }
 
   return rows.map((row, index) => {
-    const leadId = pick(row, [LEAD_ID_COLUMN]);
-    if (!leadId) throw new HandoverCsvError(`Row ${index + 2} has an empty "${LEAD_ID_COLUMN}".`);
+    const raw = pick(row, USERNAME_COLUMNS);
+    const username = raw ? normalizeUsername(raw) : null;
+    if (!username) throw new HandoverCsvError(`Row ${index + 2} has an empty or invalid username.`);
     return {
-      leadId,
+      username,
       email: pick(row, ["email", "workEmail", "work_email", "emailAddress", "professionalEmail"]),
     };
   });

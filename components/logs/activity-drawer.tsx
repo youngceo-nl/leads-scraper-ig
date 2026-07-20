@@ -99,7 +99,9 @@ export function ActivityDrawerButton() {
       const detail = (e as CustomEvent).detail as Partial<BulkJob> | undefined;
       setOpen(true);
       setTab("activity");
-      if (detail?.total && detail?.label && detail?.startedAt) {
+      // `!= null` rather than truthy: a full-account crawl sends total 0
+      // (no fixed target), which would otherwise be dropped silently.
+      if (detail?.total != null && detail?.label && detail?.startedAt) {
         saveBulkJob({ label: detail.label, total: detail.total, type: detail.type ?? "", startedAt: detail.startedAt, done: 0, crawl_job_id: detail.crawl_job_id as string | undefined });
       }
     };
@@ -113,6 +115,22 @@ export function ActivityDrawerButton() {
     if (bulkPollRef.current) clearInterval(bulkPollRef.current);
 
     const poll = async () => {
+      // Backstop for any card that outlives its job — a poll that throws, a
+      // job row that's gone, a stale entry restored from localStorage. Without
+      // this a dead crawl spins "in progress" indefinitely and the only cure
+      // is clearing site data. No crawl here runs anywhere near this long.
+      const STALE_AFTER_MS = 30 * 60 * 1000;
+      if (
+        bulkJob.type === "crawl" &&
+        !bulkJob.completed &&
+        Date.now() - bulkJob.startedAt > STALE_AFTER_MS
+      ) {
+        clearInterval(bulkPollRef.current!);
+        bulkPollRef.current = null;
+        saveBulkJob(null);
+        return;
+      }
+
       let done = 0;
       if (bulkJob.type === "analyze") {
         const remaining = await getPendingCount();
@@ -123,6 +141,14 @@ export function ActivityDrawerButton() {
       } else if (bulkJob.type === "backfill") {
         const remaining = await getBackfillProgress();
         done = bulkJob.total - remaining;
+      } else if (bulkJob.type === "crawl" && !bulkJob.crawl_job_id) {
+        // No job id means there is nothing to poll, and the generic branch
+        // below never completes a crawl — so the card would spin forever.
+        // Retire it instead of leaving a dead crawl "in progress".
+        clearInterval(bulkPollRef.current!);
+        bulkPollRef.current = null;
+        saveBulkJob({ ...bulkJob, completed: true, total: Math.max(bulkJob.done, 1) });
+        return;
       } else if (bulkJob.type === "crawl" && bulkJob.crawl_job_id) {
         const p = await getCrawlJobProgress(bulkJob.crawl_job_id);
         done = p.scraped;
@@ -342,7 +368,10 @@ export function ActivityDrawerButton() {
 }
 
 function ActiveJobRow({ job }: { job: ActiveJob }) {
-  const isPlaywright = job.type === "crawl" && job.scraped === 0 && job.status === "running";
+  // "0 scraped and running" means no page has reported back yet — it does NOT
+  // identify the provider. Apify reports nothing until it finishes, so reading
+  // this as Playwright mislabelled every Apify crawl.
+  const isWarmingUp = job.type === "crawl" && job.scraped === 0 && job.status === "running";
   const isStalled = !!job.stalled;
   const pct = job.total > 0 ? Math.min(100, Math.round((job.scraped / job.total) * 100)) : null;
   const [confirming, setConfirming] = useState(false);
@@ -366,11 +395,17 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
           : <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
         }
         <span className="text-xs font-medium flex-1 truncate">{job.label}{isStalled ? " — stuck?" : ""}</span>
-        {job.total > 0 && (
+        {/* A full-account crawl has no target to divide by, so it reports a
+            running count instead of a fraction against a made-up denominator. */}
+        {job.total > 0 ? (
           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
             {job.scraped} / {job.total}
           </span>
-        )}
+        ) : job.scraped > 0 ? (
+          <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+            {job.scraped} found
+          </span>
+        ) : null}
         {confirming ? (
           <div className="flex items-center gap-1 ml-1">
             <button
@@ -395,9 +430,9 @@ function ActiveJobRow({ job }: { job: ActiveJob }) {
           </button>
         )}
       </div>
-      {isPlaywright ? (
+      {isWarmingUp ? (
         <p className="text-[11px] text-muted-foreground pl-5">
-          Playwright browser is open — this takes 1–3 min, hang tight
+          Fetching the following list — no results reported yet, this can take a few minutes
         </p>
       ) : isStalled ? (
         <p className="text-[11px] text-yellow-700 dark:text-yellow-400 pl-5">

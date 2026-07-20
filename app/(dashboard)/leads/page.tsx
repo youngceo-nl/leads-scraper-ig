@@ -20,7 +20,10 @@ import { LeadsActionsMenu } from "@/components/leads/actions-menu";
 import { LeadsSearchBar } from "@/components/leads/search-bar";
 import { DoubleClickRow } from "@/components/leads/double-click-row";
 import { LeadEditDialog } from "@/components/leads/lead-edit-dialog";
-import { getSettings } from "@/lib/config/settings";
+import { getSettings, resolveApifyToken } from "@/lib/config/settings";
+import { getAccountHandoverStats } from "@/lib/handover/overview";
+import { HandoverSection } from "@/components/handover/handover-section";
+import { DispatchLock } from "@/components/handover/dispatch-lock";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 50;
@@ -88,11 +91,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     { count: rejectedWithScore },
     { count: rejectedCount },
     { count: backfillCount },
+    handoverAccounts,
   ] = await Promise.all([
     getSettings().catch(() => null),
     buildQuery(sort, false),
     sb.from("seeds").select("id, username"),
-    sb.from("leads").select("source_seed_id").not("source_seed_id", "is", null),
+    // Aggregated server-side: an unbounded select truncates at 1000 rows,
+    // which silently under-counted every account past the first page.
+    sb.rpc("lead_counts_by_parent"),
     sb.from("leads").select("id", { count: "exact", head: true })
       .not("bio", "is", null).in("status", ["qualified", "review"]),
     sb.from("leads").select("id", { count: "exact", head: true })
@@ -104,13 +110,21 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     sb.from("leads").select("id", { count: "exact", head: true })
       .is("followers", null).or("backfill_error.is.null,backfill_error.eq.apify_exhausted")
       .neq("status", "rejected"),
+    // Empty rather than fatal: a missing handover table (migration not yet
+    // applied) must not take the whole leads page down.
+    getAccountHandoverStats().catch(() => []),
   ]);
 
   const seedMap = new Map((seeds ?? []).map((s) => [s.id, s.username]));
-  const countMap = new Map<string, number>();
-  for (const row of seedCounts ?? []) {
-    if (row.source_seed_id) countMap.set(row.source_seed_id, (countMap.get(row.source_seed_id) ?? 0) + 1);
-  }
+  // Counted by parent_username — the account whose following list produced the
+  // lead. source_seed_id survives recursion into other accounts, so counting by
+  // it credited @pierree with 1039 leads when only 462 are his followings.
+  const countMap = new Map<string, number>(
+    ((seedCounts ?? []) as { parent_username: string; total: number }[]).map((r) => [
+      r.parent_username,
+      r.total,
+    ]),
+  );
 
   let leads = primary.data;
   let count = primary.count;
@@ -133,23 +147,33 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       settings.instagram_session_cookie)
   );
 
+  // Apify covers following scrapes and backfill; the cookie is only a fallback.
+  const apifyConfigured = !!(settings && resolveApifyToken(settings));
+
   const igStatus: "ok" | "unknown" | "missing" | "dead" = !igConfigured ? "missing"
     : settings?.ig_cookie_status === "dead" ? "dead"
     : settings?.ig_cookie_status === "live" ? "ok"
     : "unknown";
 
   return (
-    <div className="p-6 space-y-6">
-      {igStatus === "missing" && (
+    <div className="relative">
+      {/* absolute, not fixed — covers this page's content only, not the dashboard sidebar */}
+      <DispatchLock />
+      <div className="p-6 space-y-6">
+      {/* Cookie warnings only matter when Apify can't cover the work. Apify is
+          the standard provider for both following scrapes and backfill, so a
+          dead cookie is not an error while a token is configured — the old
+          "scraping will fail" banner was simply untrue. */}
+      {!apifyConfigured && igStatus === "missing" && (
         <div className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           <Instagram className="h-4 w-4 shrink-0" />
-          <span>No Instagram cookie configured — profile scraping is disabled. <a href="/settings#instagram" className="font-medium underline underline-offset-2">Fix in Settings</a></span>
+          <span>No Apify token and no Instagram cookie — scraping is disabled. <a href="/settings#instagram" className="font-medium underline underline-offset-2">Fix in Settings</a></span>
         </div>
       )}
-      {igStatus === "dead" && (
+      {!apifyConfigured && igStatus === "dead" && (
         <div className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>Instagram cookie is expired — scraping will fail. <a href="/settings#instagram" className="font-medium underline underline-offset-2">Fix in Settings</a></span>
+          <span>Instagram cookie is expired and no Apify token is set — scraping will fail. <a href="/settings#instagram" className="font-medium underline underline-offset-2">Fix in Settings</a></span>
         </div>
       )}
       <div className="flex items-center justify-between gap-4">
@@ -172,6 +196,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           />
         </div>
       </div>
+
+      <HandoverSection accounts={handoverAccounts} />
 
       <Card>
         <CardHeader><CardTitle>Filters</CardTitle></CardHeader>
@@ -268,16 +294,16 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       leadId={l.id}
                       status={l.status}
                       sourceSeedId={l.source_seed_id ?? null}
-                      sourceUsername={l.source_seed_id ? (seedMap.get(l.source_seed_id) ?? null) : null}
+                      sourceUsername={l.parent_username ?? (l.source_seed_id ? (seedMap.get(l.source_seed_id) ?? null) : null)}
                     />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground" data-col="source">
                     {l.lead_source ? (
                       <Badge variant="outline" className="text-xs">{leadSourceLabel(l.lead_source)}</Badge>
-                    ) : l.source_seed_id && seedMap.get(l.source_seed_id) ? (
+                    ) : l.parent_username ? (
                       <SourceBadge
-                        username={seedMap.get(l.source_seed_id)!}
-                        count={countMap.get(l.source_seed_id) ?? 0}
+                        username={l.parent_username}
+                        count={countMap.get(l.parent_username) ?? 0}
                       />
                     ) : "—"}
                   </TableCell>
@@ -301,6 +327,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
       <Pagination page={page} totalPages={totalPages} sp={sp} />
       <LeadEditDialog />
+      </div>
     </div>
   );
 }

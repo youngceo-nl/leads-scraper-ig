@@ -17,7 +17,7 @@ export const dailyScrape = inngest.createFunction(
     const { data: seeds } = await step.run("load-seeds", async () => {
       const { data } = await sb
         .from("seeds")
-        .select("id, username, max_profiles_to_scrape, exhausted_providers")
+        .select("id, username, max_profiles_to_scrape, scrape_full_following, exhausted_providers")
         .or("max_profiles_to_scrape.is.null,max_profiles_to_scrape.gte.200");
       // Skip seeds where the cookie provider is exhausted (the only provider in active use)
       return { data: (data ?? []).filter((s) => !(s.exhausted_providers as string[])?.includes("cookie")) };
@@ -45,10 +45,13 @@ export const dailyScrape = inngest.createFunction(
       }
     }
 
-    // Pick the N seeds with the oldest last crawl
-    const picked = [...seeds]
-      .sort((a, b) => (lastCrawled[a.id] ?? 0) - (lastCrawled[b.id] ?? 0))
-      .slice(0, SEEDS_PER_RUN);
+    // An account is scraped once, so a seed with any completed crawl is done
+    // for good — this run only ever picks up seeds added since the last one.
+    // Re-scraping is a deliberate manual action behind the override password.
+    const never = seeds.filter((s) => !lastCrawled[s.id]);
+    if (!never.length) return { skipped: "all eligible seeds already scraped" };
+
+    const picked = never.slice(0, SEEDS_PER_RUN);
 
     // Insert a crawl_job row per seed and fire the event
     const started: string[] = [];
@@ -76,6 +79,7 @@ export const dailyScrape = inngest.createFunction(
           seed_id: seed.id,
           seed_username: seed.username,
           profile_limit: seed.max_profiles_to_scrape ?? settings.max_profiles_per_account ?? 800,
+          full_account: seed.scrape_full_following ?? false,
         },
       });
 

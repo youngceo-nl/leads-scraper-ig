@@ -73,6 +73,15 @@ export async function persistLead(args: Args) {
 // Bulk-insert newly discovered usernames as `pending` leads with the minimal
 // metadata we have from the following-scraper. Skips usernames already in DB.
 // Returns the count actually inserted.
+export type UpsertResult = {
+  /** Genuinely new leads written to the table. */
+  inserted: number;
+  /** Usernames that already existed — the upsert's ignoreDuplicates skipped them. */
+  duplicates: number;
+  /** Usernames dropped because they were previously bulk-deleted. */
+  excluded: number;
+};
+
 export async function bulkUpsertDiscoveredLeads(
   items: DiscoveredFollowing[],
   opts: {
@@ -80,16 +89,17 @@ export async function bulkUpsertDiscoveredLeads(
     source_seed_id: string | null;
     parent_username: string | null;
   },
-): Promise<number> {
-  if (items.length === 0) return 0;
+): Promise<UpsertResult> {
+  if (items.length === 0) return { inserted: 0, duplicates: 0, excluded: 0 };
   const sb = createAdminClient();
 
   // Drop any usernames the user previously bulk-deleted — never re-add them.
-  const excluded = await getExcludedUsernames(items.map((i) => i.username));
-  const fresh = excluded.size
-    ? items.filter((i) => !excluded.has(i.username.toLowerCase()))
+  const excludedSet = await getExcludedUsernames(items.map((i) => i.username));
+  const fresh = excludedSet.size
+    ? items.filter((i) => !excludedSet.has(i.username.toLowerCase()))
     : items;
-  if (fresh.length === 0) return 0;
+  const excluded = items.length - fresh.length;
+  if (fresh.length === 0) return { inserted: 0, duplicates: 0, excluded };
 
   const rows = fresh.map((i) => ({
     username: i.username,
@@ -114,7 +124,10 @@ export async function bulkUpsertDiscoveredLeads(
     if (error) throw new Error(`bulkUpsertDiscoveredLeads failed: ${error.message}`);
     inserted += data?.length ?? 0;
   }
-  return inserted;
+  // ignoreDuplicates skips a row silently on conflict rather than reporting it,
+  // so "how many already existed" is the remainder, not something Postgres hands back.
+  const duplicates = fresh.length - inserted;
+  return { inserted, duplicates, excluded };
 }
 
 export async function logCrawl(opts: {
@@ -157,6 +170,37 @@ export async function getJobStatus(crawl_job_id: string): Promise<string | null>
   const sb = createAdminClient();
   const { data } = await sb.from("crawl_jobs").select("status").eq("id", crawl_job_id).single();
   return data?.status ?? null;
+}
+
+/**
+ * Increments the live funnel counters shown on the Activity page.
+ *
+ * Goes through the bump_crawl_counters SQL function rather than a
+ * read-modify-write: score-lead fans out and runs several leads concurrently,
+ * so reading then writing from here would lose counts. Never throws — a
+ * miscounted funnel must not fail the pipeline stage that reported it.
+ */
+export async function bumpFunnelCounters(opts: {
+  crawl_job_id: string | null;
+  found?: number;
+  backfilled?: number;
+  filtered?: number;
+  verified?: number;
+  duplicate?: number;
+  excluded?: number;
+}) {
+  if (!opts.crawl_job_id) return; // work outside a run counts toward no run
+  const sb = createAdminClient();
+  const { error } = await sb.rpc("bump_crawl_counters", {
+    p_job_id: opts.crawl_job_id,
+    p_found: opts.found ?? 0,
+    p_backfilled: opts.backfilled ?? 0,
+    p_filtered: opts.filtered ?? 0,
+    p_verified: opts.verified ?? 0,
+    p_duplicate: opts.duplicate ?? 0,
+    p_excluded: opts.excluded ?? 0,
+  });
+  if (error) console.error("[bumpFunnelCounters]", error.message);
 }
 
 export async function bumpJobCounters(opts: {

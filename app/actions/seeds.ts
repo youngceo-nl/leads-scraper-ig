@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toUsername, profileUrl } from "@/lib/pipeline/normalize";
 import { inngest } from "@/inngest/client";
 import { getSettings } from "@/lib/config/settings";
+import { getScrapedSeedIds, hasBeenScraped, checkRescrapeOverride } from "@/lib/seeds/scraped";
 
 async function requireUser() {
   const sb = await createClient();
@@ -28,12 +29,14 @@ export async function addSeed(formData: FormData) {
   const username = toUsername(raw);
   if (!username) return { error: "Invalid username/URL" };
   const max_profiles_to_scrape = parseLimit(formData.get("max_profiles_to_scrape"));
+  const scrape_full_following = formData.get("scrape_full_following") === "on";
 
   const sb = createAdminClient();
   const { error } = await sb.from("seeds").insert({
     username,
     profile_url: profileUrl(username),
-    max_profiles_to_scrape,
+    max_profiles_to_scrape: scrape_full_following ? null : max_profiles_to_scrape,
+    scrape_full_following,
   });
 
   if (error) {
@@ -48,14 +51,23 @@ export async function addSeed(formData: FormData) {
   return { ok: true };
 }
 
-export async function updateSeedLimit(id: string, max_profiles_to_scrape: number | null) {
+export async function updateSeedLimit(
+  id: string,
+  max_profiles_to_scrape: number | null,
+  scrape_full_following = false,
+) {
   await requireUser();
   const value =
     max_profiles_to_scrape != null && Number.isFinite(max_profiles_to_scrape) && max_profiles_to_scrape > 0
       ? Math.floor(max_profiles_to_scrape)
       : null;
   const sb = createAdminClient();
-  const { error } = await sb.from("seeds").update({ max_profiles_to_scrape: value }).eq("id", id);
+  const { error } = await sb
+    .from("seeds")
+    // The stored limit is cleared in full mode so the number left in the box
+    // can't quietly take effect again if full is later switched off.
+    .update({ max_profiles_to_scrape: scrape_full_following ? null : value, scrape_full_following })
+    .eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/seeds");
   return { ok: true };
@@ -91,7 +103,7 @@ export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise
   const admin = createAdminClient();
   const settings = await getSettings(true);
 
-  const { data: seeds } = await admin.from("seeds").select("id, username, max_profiles_to_scrape");
+  const { data: seeds } = await admin.from("seeds").select("id, username, max_profiles_to_scrape, scrape_full_following");
   if (!seeds?.length) return { started: 0 };
 
   // Skip seeds that already have a running or queued job
@@ -101,11 +113,15 @@ export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise
     .in("status", ["running", "queued"]);
   const activeSeedIds = new Set((activeJobs ?? []).map((j) => j.seed_id));
 
+  // "Crawl all" never re-scrapes: overriding is a deliberate per-account
+  // decision, not something to apply in bulk.
+  const scrapedSeedIds = await getScrapedSeedIds(seeds.map((s) => s.id));
+
   const provider = providerOverride ?? settings.following_scraper_provider;
   let started = 0;
 
   for (const seed of seeds) {
-    if (activeSeedIds.has(seed.id)) continue;
+    if (activeSeedIds.has(seed.id) || scrapedSeedIds.has(seed.id)) continue;
     const { data: job, error: jobErr } = await admin
       .from("crawl_jobs")
       .insert({ seed_id: seed.id, status: "queued", max_depth: 1 })
@@ -119,6 +135,7 @@ export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise
         seed_id: seed.id,
         seed_username: seed.username,
         profile_limit: seed.max_profiles_to_scrape ?? null,
+        full_account: seed.scrape_full_following ?? false,
         provider_override: providerOverride ?? null,
       },
     });
@@ -131,15 +148,34 @@ export async function startAllCrawls(providerOverride?: ScrapeProvider): Promise
   return { started };
 }
 
-export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvider) {
+export async function startCrawl(
+  seed_id: string,
+  providerOverride?: ScrapeProvider,
+  overridePassword?: string,
+) {
   await requireUser();
   const admin = createAdminClient();
   const { data: seed } = await admin
     .from("seeds")
-    .select("id, username, max_profiles_to_scrape")
+    .select("id, username, max_profiles_to_scrape, scrape_full_following")
     .eq("id", seed_id)
     .single();
   if (!seed) return { error: "seed_not_found" };
+
+  // An account is scraped once; re-running costs credits and re-walks a list
+  // already processed, so it takes the override password.
+  if (await hasBeenScraped(seed_id)) {
+    const denied = checkRescrapeOverride(overridePassword);
+    if (denied) {
+      // Revalidate so the row re-renders as scraped: the page may have been
+      // loaded before this seed's crawl finished, in which case it is still
+      // showing "Start search" and no password field.
+      revalidatePath("/seeds");
+      // Lets the client reveal the password input rather than telling the user
+      // to enter a password into a field that isn't on screen.
+      return { error: denied, needs_override: true };
+    }
+  }
 
   const settings = await getSettings(true);
   const provider = providerOverride ?? settings.following_scraper_provider;
@@ -185,6 +221,7 @@ export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvi
       seed_id: seed.id,
       seed_username: seed.username,
       profile_limit: seed.max_profiles_to_scrape ?? null,
+      full_account: seed.scrape_full_following ?? false,
       provider_override: providerOverride ?? null,
     },
   });
@@ -192,6 +229,12 @@ export async function startCrawl(seed_id: string, providerOverride?: ScrapeProvi
 
   revalidatePath("/seeds");
   revalidatePath("/");
-  return { ok: true, crawl_job_id: job.id, profile_limit: seed.max_profiles_to_scrape ?? settings.max_profiles_per_account ?? 100, seed_username: seed.username };
+  return {
+    ok: true,
+    crawl_job_id: job.id,
+    profile_limit: seed.max_profiles_to_scrape ?? settings.max_profiles_per_account ?? 100,
+    full_account: seed.scrape_full_following ?? false,
+    seed_username: seed.username,
+  };
 }
 

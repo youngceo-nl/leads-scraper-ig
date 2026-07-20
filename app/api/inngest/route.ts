@@ -9,9 +9,10 @@ import { retryBlockedLeads } from "@/inngest/functions/retry-blocked-leads";
 import { refreshIgCookies } from "@/inngest/functions/refresh-ig-cookies";
 import { batchWatchdog } from "@/inngest/functions/batch-watchdog";
 
-// dailyScrape is intentionally NOT registered here — its trigger was broken
-// for weeks (see git history) and is now fixed, but it's paused pending
-// review before being allowed to auto-crawl.
+// dailyScrape is intentionally NOT registered here, permanently. Accounts are
+// scraped once and re-scraping takes the override password (lib/seeds/scraped.ts),
+// so scheduled crawling has no role left — every scrape is a deliberate click.
+// Do not add it back without revisiting that policy.
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [crawlSeed, processProfile, recurseFollowing, backfillMetadata, scoreLead, retryBlockedLeads, refreshIgCookies, batchWatchdog],

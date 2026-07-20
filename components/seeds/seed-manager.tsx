@@ -33,18 +33,24 @@ export function SeedManager({
   jobs,
   defaultLimit,
   systemStatus,
+  scrapedSeedIds = [],
 }: {
   seeds: Seed[];
   exhaustedSeeds?: Seed[];
   jobs: LatestJob[];
   defaultLimit: number;
   systemStatus: SystemStatusProps;
+  /** Seeds with a completed crawl — blocked from scraping again. */
+  scrapedSeedIds?: string[];
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [bulkProvider, setBulkProvider] = useState<ScrapeProvider>("cookie");
+  const [bulkProvider, setBulkProvider] = useState<ScrapeProvider>("apify");
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [addFull, setAddFull] = useState(false);
+
+  const scraped = useMemo(() => new Set(scrapedSeedIds), [scrapedSeedIds]);
 
   const latestBySeed = useMemo(() => {
     const m = new Map<string, LatestJob>();
@@ -58,7 +64,11 @@ export function SeedManager({
     start(async () => {
       const res = await addSeed(formData);
       if ("error" in res && res.error) setError(res.error);
-      else if ("already_existed" in res && res.already_existed) setInfo("Account was already added — moved to top.");
+      else {
+        // The checkbox is controlled, so the form's own reset won't clear it.
+        setAddFull(false);
+        if ("already_existed" in res && res.already_existed) setInfo("Account was already added — moved to top.");
+      }
     });
   };
 
@@ -75,9 +85,20 @@ export function SeedManager({
           name="max_profiles_to_scrape"
           type="number"
           min={1}
-          placeholder={`How many to check (default ${defaultLimit})`}
+          disabled={addFull}
+          placeholder={addFull ? "all following" : `How many to check (default ${defaultLimit})`}
           className="w-56"
         />
+        <label className="flex items-center gap-1.5 text-sm text-muted-foreground whitespace-nowrap cursor-pointer">
+          <input
+            type="checkbox"
+            name="scrape_full_following"
+            checked={addFull}
+            onChange={(e) => setAddFull(e.target.checked)}
+            className="h-4 w-4"
+          />
+          Full account
+        </label>
         <Button type="submit" disabled={pending}>Add account</Button>
       </form>
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -126,6 +147,7 @@ export function SeedManager({
             seed={s}
             defaultLimit={defaultLimit}
             latestJob={latestBySeed.get(s.id) ?? null}
+            scraped={scraped.has(s.id)}
           />
         ))}
       </div>
@@ -140,33 +162,41 @@ export function SeedManager({
   );
 }
 
+// ScrapingBee is gone: it has no code path in scrape-following.ts, and
+// offering it meant picking a provider that silently ran something else.
 const PROVIDER_OPTIONS: { value: ScrapeProvider; label: string }[] = [
-  { value: "auto",        label: "Auto (best available)" },
-  { value: "playwright",  label: "Playwright (unlimited)" },
-  { value: "cookie",      label: "Cookie only (free, max ~250)" },
-  { value: "apify",       label: "Apify" },
-  { value: "scrapingbee", label: "ScrapingBee" },
+  { value: "apify",      label: "Apify (standard)" },
+  { value: "auto",       label: "Auto (Apify → Playwright → cookie)" },
+  { value: "playwright", label: "Playwright" },
+  { value: "cookie",     label: "Cookie only (free, max ~250)" },
 ];
 
 function SeedRow({
   seed,
   defaultLimit,
   latestJob,
+  scraped,
 }: {
   seed: Seed;
   defaultLimit: number;
   latestJob: LatestJob | null;
+  /** Has a completed crawl — re-scraping needs the override password. */
+  scraped: boolean;
 }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
-  const [provider, setProvider] = useState<ScrapeProvider>("auto");
+  const [provider, setProvider] = useState<ScrapeProvider>("apify");
+  const [overriding, setOverriding] = useState(false);
+  const [password, setPassword] = useState("");
   const [limit, setLimit] = useState<string>(
     seed.max_profiles_to_scrape != null ? String(seed.max_profiles_to_scrape) : "",
   );
+  const [full, setFull] = useState<boolean>(seed.scrape_full_following ?? false);
 
   const limitChanged =
-    (limit === "" ? null : Number(limit)) !==
-    (seed.max_profiles_to_scrape ?? null);
+    full !== (seed.scrape_full_following ?? false) ||
+    (!full &&
+      (limit === "" ? null : Number(limit)) !== (seed.max_profiles_to_scrape ?? null));
 
   const rawError =
     latestJob && latestJob.status === "failed" && latestJob.error_message
@@ -201,12 +231,22 @@ function SeedRow({
         <Input
           type="number"
           min={1}
-          value={limit}
+          value={full ? "" : limit}
+          disabled={full}
           onChange={(e) => setLimit(e.target.value)}
-          placeholder={`default ${defaultLimit}`}
+          placeholder={full ? "all following" : `default ${defaultLimit}`}
           className="w-40 h-8 text-xs"
           aria-label="How many accounts to check"
         />
+        <label className="flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap cursor-pointer">
+          <input
+            type="checkbox"
+            checked={full}
+            onChange={(e) => setFull(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          Full
+        </label>
         {limitChanged && (
           <Button
             size="icon"
@@ -215,7 +255,7 @@ function SeedRow({
             onClick={() =>
               start(async () => {
                 const n = limit === "" ? null : Number(limit);
-                const res = await updateSeedLimit(seed.id, n);
+                const res = await updateSeedLimit(seed.id, n, full);
                 setMsg("error" in res && res.error ? `Error: ${res.error}` : "Saved.");
               })
             }
@@ -238,22 +278,72 @@ function SeedRow({
         ))}
       </select>
 
+      {scraped && !overriding && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => setOverriding(true)}
+          title="This account has already been scraped"
+        >
+          Scrape again
+        </Button>
+      )}
+      {/* Keyed off `overriding` alone, not `scraped`: when a crawl finishes
+          after this page rendered, `scraped` is still false and gating on it
+          would hide the very field the error tells you to fill in. */}
+      {overriding && (
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Override password"
+          className="w-40 h-8 text-xs"
+          autoFocus
+          aria-label="Re-scrape override password"
+        />
+      )}
+
       <Button
         size="sm"
         variant="secondary"
-        disabled={pending}
-        
+        // An already-scraped account only becomes startable once the override
+        // input is showing — the password is checked server-side regardless.
+        disabled={pending || (scraped && !overriding)}
+        title={scraped && !overriding ? "Already scraped" : undefined}
         onClick={() =>
           start(async () => {
-            const res = await startCrawl(seed.id, provider);
+            // Persist an unsaved Full/limit change before starting, so the
+            // crawl matches what the row is showing. Without this, ticking
+            // Full and hitting start silently ran the *stored* config — the
+            // scrape wasn't full and nothing said so.
+            if (limitChanged) {
+              const saved = await updateSeedLimit(seed.id, limit === "" ? null : Number(limit), full);
+              if ("error" in saved && saved.error) {
+                setMsg(`Error saving settings: ${saved.error}`);
+                return;
+              }
+            }
+            const res = await startCrawl(seed.id, provider, overriding ? password : undefined);
             if ("error" in res && res.error) {
               setMsg(`Error: ${res.error}`);
+              // The seed finished a crawl after this page rendered, so the row
+              // is still showing the un-scraped controls. Reveal the password
+              // field instead of asking for a password with nowhere to type it.
+              if ("needs_override" in res && res.needs_override) setOverriding(true);
             } else if ("ok" in res && res.ok) {
-              setMsg(`Search started (${provider}).`);
+              setMsg(
+                `Search started — ${provider}, ${full ? "full account" : `up to ${limit || defaultLimit}`}.`,
+              );
+              setOverriding(false);
+              setPassword("");
               window.dispatchEvent(new CustomEvent("open-activity-drawer", {
                 detail: {
                   label: `Scraping @${res.seed_username}`,
-                  total: res.profile_limit,
+                  // 0 in full mode: the crawl runs until the following list
+                  // ends, so profile_limit is just the fallback default and
+                  // showing it as a target ("0 / 1000") is meaningless.
+                  total: res.full_account ? 0 : res.profile_limit,
                   type: "crawl",
                   startedAt: Date.now(),
                   crawl_job_id: res.crawl_job_id,
@@ -263,7 +353,8 @@ function SeedRow({
           })
         }
       >
-        <Play className="h-3 w-3 mr-1" /> {pending ? "Starting…" : "Start search"}
+        <Play className="h-3 w-3 mr-1" />
+        {pending ? "Starting…" : scraped || overriding ? "Scrape again" : "Start search"}
       </Button>
       <Button
         size="icon"

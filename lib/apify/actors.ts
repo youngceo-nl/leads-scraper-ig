@@ -85,6 +85,33 @@ export async function scrapeFollowing(opts: {
 // =============================================================================
 // 2. Scrape PROFILE metadata for a batch of usernames
 // =============================================================================
+/**
+ * Posts embedded in a profile-actor result. Same field names the standalone
+ * posts actor uses, so both paths produce identical RecentPost shapes.
+ *
+ * Note these are the *latest* posts, not a 30-day window — an account that
+ * last posted years ago still returns 12 here. Recency has to be judged from
+ * `taken_at`, not from the list being non-empty.
+ */
+function mapLatestPosts(raw: unknown): RecentPost[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((p): p is AnyRec => !!p && typeof p === "object")
+    .map((p) => ({
+      caption: str(p.caption) ?? null,
+      likes: num(p.likesCount) ?? num(p.likes),
+      comments: num(p.commentsCount) ?? num(p.comments),
+      views: num(p.videoViewCount) ?? num(p.videoPlayCount) ?? num(p.views),
+      taken_at: str(p.timestamp) ?? str(p.takenAt) ?? null,
+      // Reels are the activity signal (see computeMetrics / metricsGate).
+      // Apify marks them productType "clips"; the Video fallback covers actors
+      // that omit productType. Without these two flags reels_last_30_days is
+      // always 0 and the whole reels gate sits inert.
+      is_reel: str(p.productType) === "clips" || str(p.type) === "Video",
+      is_pinned: Boolean(p.isPinned ?? p.is_pinned ?? false),
+    }));
+}
+
 export async function scrapeProfiles(opts: {
   token: string | string[];
   usernames: string[];
@@ -119,7 +146,12 @@ export async function scrapeProfiles(opts: {
         posts: num(it.postsCount) ?? num(it.posts) ?? 0,
         is_private: Boolean(it.private ?? it.isPrivate ?? false),
         is_verified: Boolean(it.verified ?? it.isVerified ?? false),
-        recent_posts: [],
+        // The profile actor already returns the last ~12 posts inline. This
+        // used to be hardcoded to [], which threw them away and then failed
+        // hardFilter's non-empty recent_posts check — every Apify-backfilled
+        // profile was rejected as "no_recent_posts" while a second actor run
+        // was needed to recover data we'd already been given.
+        recent_posts: mapLatestPosts(it.latestPosts),
       };
     })
     .filter((p): p is ScrapedProfile => p !== null);
@@ -158,6 +190,10 @@ export async function scrapePosts(opts: {
       comments: num(it.commentsCount) ?? num(it.comments),
       views: num(it.videoViewCount) ?? num(it.videoPlayCount) ?? num(it.views),
       taken_at: str(it.timestamp) ?? str(it.takenAt) ?? null,
+      // Kept in step with mapLatestPosts so this path can't silently produce
+      // reel-less posts if it is ever wired back in.
+      is_reel: str(it.productType) === "clips" || str(it.type) === "Video",
+      is_pinned: Boolean(it.isPinned ?? it.is_pinned ?? false),
     };
     const arr = out.get(owner) ?? [];
     arr.push(post);

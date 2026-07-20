@@ -4,20 +4,22 @@ import { scrapeProfiles } from "@/lib/apify/actors";
 import { fetchProfileMetadataDirect, InstagramDirectError, sleep } from "@/lib/instagram/direct";
 import { buildCookiePool, buildProxyPool, pickCookie, markRateLimited } from "@/lib/instagram/cookie-pool";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { logCrawl, logError } from "@/lib/pipeline/persist";
+import { bumpFunnelCounters, logCrawl, logError } from "@/lib/pipeline/persist";
 import { persistIgCookieStatus } from "@/app/actions/settings";
 
 // Backfill basic profile metadata (followers, following, posts, bio,
 // external_link, is_private, is_verified) for a batch of usernames.
 //
 // Two paths:
-//  1. FREE — direct fetch to IG's web_profile_info endpoint using the burner
-//     IG session cookie from Settings. Throttled per profile to keep the
-//     account safe.
-//  2. PAID — Apify profile actor in batches. Fallback when no IG cookie is
-//     configured. Faster but costs Apify credits.
+//  1. PAID — Apify profile actor in batches. The standard path: fast, and it
+//     doesn't depend on a burner account staying alive. Costs Apify credits.
+//  2. FREE — direct fetch to IG's web_profile_info endpoint using the burner
+//     IG session cookie from Settings, throttled per profile to keep the
+//     account safe. Used only when no Apify token is configured.
 //
-// Path is chosen at runtime by checking `settings.instagram_session_cookie`.
+// Apify is chosen whenever a token exists. The cookie fallback additionally
+// requires the cookie not be marked dead — a dead cookie is worse than no
+// cookie, since it fails every profile while looking configured.
 
 const APIFY_BATCH = 100;
 const COOKIE_BATCH = 50;
@@ -60,15 +62,23 @@ export const backfillMetadata = inngest.createFunction(
     const cookiePool = buildCookiePool(settings);
     const entry = pickCookie(cookiePool);
 
-    // Cookie path is preferred — free, no external quota.
-    // Apify is the fallback when no IG cookie is available.
-    const useFreePath = !!entry;
-    const useApify = !useFreePath && apifyTokens.length > 0;
+    // Apify is the standard path, matching the following scraper.
+    //
+    // This used to prefer the cookie whenever one merely *existed*, and
+    // pickCookie only screens out rate-limited cookies — not dead ones. A dead
+    // cookie therefore won the choice and backfill retried it forever instead
+    // of falling back, which is how leads sat unenriched with the pipeline
+    // reporting nothing obviously wrong.
+    const cookieUsable = !!entry && settings.ig_cookie_status !== "dead";
+    const useApify = apifyTokens.length > 0;
+    const useFreePath = !useApify && cookieUsable;
 
     if (!useFreePath && !useApify) {
       await logError({
         context: "backfill.metadata",
-        error_message: `No cookies available (pool size: ${cookiePool.length}, all rate-limited or empty) and no Apify token configured — cannot backfill ${usernames.length} accounts.`,
+        error_message:
+          `Cannot backfill ${usernames.length} accounts: no Apify token configured, and no usable IG cookie ` +
+          `(pool size: ${cookiePool.length}, status: ${settings.ig_cookie_status ?? "unknown"}).`,
         crawl_job_id: crawl_job_id ?? null,
       });
       return { processed: 0, error: "no-cookie-no-apify-token" };
@@ -251,6 +261,9 @@ export const backfillMetadata = inngest.createFunction(
       const batch = batches[bi];
       const result = await step.run(`apify-batch-${bi}`, async () => {
         try {
+          // One actor run: the profile actor returns the latest posts inline
+          // (see mapLatestPosts), so a separate posts actor would be paying
+          // twice for data the first call already includes.
           return await scrapeProfiles({ token, usernames: batch });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -330,6 +343,11 @@ export const backfillMetadata = inngest.createFunction(
       });
       updated += wrote.count;
       apifyLeadIds.push(...wrote.ids);
+      if (wrote.count > 0) {
+        await step.run(`bump-backfilled-${bi}`, () =>
+          bumpFunnelCounters({ crawl_job_id: crawl_job_id ?? null, backfilled: wrote.count }),
+        );
+      }
     }
 
     // Auto-score every enriched lead (no follower gate), same as the cookie path.

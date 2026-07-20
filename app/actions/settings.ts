@@ -34,7 +34,6 @@ export async function saveSettings(prev: AppSettings, formData: FormData) {
     min_followers: num(formData.get("min_followers"), prev.min_followers),
     max_followers: num(formData.get("max_followers"), prev.max_followers),
     min_engagement_rate: num(formData.get("min_engagement_rate"), prev.min_engagement_rate),
-    min_posts_last_30_days: num(formData.get("min_posts_last_30_days"), prev.min_posts_last_30_days),
     min_reels_last_30_days: num(formData.get("min_reels_last_30_days"), prev.min_reels_last_30_days),
     include_keywords: csv(formData.get("include_keywords")),
     exclude_keywords: csv(formData.get("exclude_keywords")),

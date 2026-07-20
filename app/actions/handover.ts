@@ -3,8 +3,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import {
   claimBatch as claim,
-  applyEnrichment as apply,
+  applyEnrichmentAll as applyAll,
   closeBatch as close,
+  getDispatchState as dispatchState,
   HandoverError,
 } from "@/lib/handover/batch";
 import { HandoverCsvError } from "@/lib/handover/format";
@@ -26,7 +27,6 @@ export type HandoverResult<T> = ({ ok: true } & T) | { ok: false; error: string 
 async function run<T>(fn: () => Promise<T>): Promise<HandoverResult<T>> {
   try {
     const result = await fn();
-    revalidatePath("/handover");
     revalidatePath("/leads");
     return { ok: true, ...result };
   } catch (error) {
@@ -38,17 +38,24 @@ async function run<T>(fn: () => Promise<T>): Promise<HandoverResult<T>> {
   }
 }
 
-export async function claimBatch() {
+export async function claimBatch(parentUsername: string) {
   await requireUser();
-  return run(() => claim());
+  return run(() => claim(parentUsername));
 }
 
-export async function applyEnrichment(csvText: string) {
+/** Applies one returned Clay CSV across every open batch at once — see applyEnrichmentAll. */
+export async function applyEnrichmentGlobal(csvText: string) {
   await requireUser();
-  return run(() => apply(csvText));
+  return run(() => applyAll(csvText));
 }
 
-export async function closeBatch() {
+export async function closeBatch(parentUsername: string) {
   await requireUser();
-  return run(() => close());
+  return run(() => close(parentUsername));
+}
+
+/** Drives the whole-page dispatch lock — no revalidatePath, this is a plain read polled from the client. */
+export async function getDispatchState() {
+  await requireUser();
+  return dispatchState();
 }

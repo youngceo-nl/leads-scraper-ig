@@ -9,6 +9,9 @@ type Events = {
       // Optional per-seed cap on how many followings to scrape from the seed
       // itself. Recursion still uses settings.max_profiles_per_account.
       profile_limit?: number | null;
+      // Scrape the seed's entire following list, ignoring profile_limit and
+      // stopping only when Instagram runs out of pages.
+      full_account?: boolean;
       // Optional one-off override of the configured scrape provider.
       provider_override?: string | null;
     };
