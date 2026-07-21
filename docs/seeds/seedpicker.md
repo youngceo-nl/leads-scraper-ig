@@ -10,7 +10,7 @@ Now, I believe that the sales agency one is better recognizable before apify scr
 
 so we want to have a function in the app that goes through all the accounts we have and decides which it is going to put on the recommended section. 
 
-### Suggested seed accounts section (Source Accounts page)
+### Suggested seed accounts section (Source Accounts page) ✅
 
 **Goal:**
 Add a "Recommended" section to the Source Accounts page, populated by a 
@@ -41,13 +41,17 @@ candidates for human curation (not auto-added — a human picks from the list).
 - This is a suggestion layer only — final decision stays with human curation, 
   nothing gets auto-added as a seed
 
+**Shipped:** a "Recommended source accounts" card at the top of /seeds (5 at a time), a "Mark bad" action with an inline are-you-sure confirm, and a "Bad seeds" table at the bottom with Restore. Nothing is auto-added — every candidate needs an explicit "Add as seed" click.
+
+**Important finding on the two signal types:** true network correlation ("who they follow overlaps with known-good seeds' followings", the @pierree signal) turned out to be **uncomputable from existing data** — the app never recorded the full who-follows-whom graph, only a single parent per discovered account (`leads.parent_username`, first-writer-wins), so multi-seed overlap for anything already scraped is unrecoverable. Added a new `following_edges` table that records every edge at scrape time going forward, backfilled with the ~7,248 single edges `parent_username` still had (real overlap only starts accruing from here). The bio/business_model signal (the @kishanslings case) needed no new infrastructure — the AI classifier already tags `business_model='agency'` from bio text alone. Both feed one transparent score in `lib/seeds/recommend.ts`: business-model weight (agency highest) + ICP fit score + overall score + following-list size (capped) + seed-overlap bonus. Verified live: top 5 real candidates all scored ICP=10 with correct provenance (e.g. `@mannyfrometa`, found via `@brezscales`).
+
 **Questions:**
 - 👉 Where does "accounts we have" come from — is there an existing table/list 
   of all scraped or known accounts to run this function against, or does 
-  Claude need to locate it? 👈
+  Claude need to locate it? 👈 **Answered:** the `leads` table — every account the system has ever scraped, already enriched with `business_model`/`icp_fit_score`/`overall_score` by the AI classifier. No new table needed for the candidate pool itself.
 - 👉 Should the two signal types (network correlation vs. bio content) be 
   weighted/scored separately and combined, or should Claude propose a 
-  scoring approach? 👈
+  scoring approach? 👈 **Answered:** combined into one score — see the scoring breakdown above and the comment block at the top of `lib/seeds/recommend.ts`.
 - 👉 Any known accounts that are explicitly NOT good seeds, to use as 
   negative examples? (optional, but helps calibrate the function) 👈 make a fuction where you can mark an account as shit seed, then with an are you sure? And then on the bottom of the page will be a table with only shit seeds (will be used to train the system later)
 - 👉 Roughly how many candidates should the Recommended section show at 

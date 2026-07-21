@@ -21,10 +21,22 @@ export async function addSeed(formData: FormData) {
   const username = toUsername(raw);
   if (!username) return { error: "Invalid username/URL" };
 
+  // Optional: callers that already know this account's following count (e.g.
+  // adding a recommended seed — it's already a lead, so leads.following is on
+  // hand) can pass it along instead of the new seed row showing "unknown"
+  // until someone hits the manual refresh. Best-known, not guaranteed fresh —
+  // same caveat as any lead.following value (see crawl-seed.ts's own comment
+  // on why it re-checks rather than trusting an existing lead row).
+  const followingRaw = formData.get("following_count");
+  const followingCount = followingRaw != null && Number.isFinite(Number(followingRaw)) && Number(followingRaw) >= 0
+    ? Math.floor(Number(followingRaw))
+    : null;
+
   const sb = createAdminClient();
   const { error } = await sb.from("seeds").insert({
     username,
     profile_url: profileUrl(username),
+    ...(followingCount != null ? { following_count: followingCount } : {}),
   });
 
   if (error) {
@@ -44,6 +56,39 @@ export async function deleteSeed(id: string) {
   const sb = createAdminClient();
   await sb.from("seeds").delete().eq("id", id);
   revalidatePath("/seeds");
+}
+
+/**
+ * Records a human judgment that this account is a bad seed candidate —
+ * separate from `excluded_usernames` (that blocks re-adding a LEAD; this is
+ * about seed-account quality, a different signal). Kept as a standing list
+ * for training later (docs/seeds/seedpicker.md), not just a dismissal —
+ * `getRecommendedSeeds` excludes anything in here going forward.
+ */
+export async function markBadSeed(username: string, reason?: string) {
+  const authed = await createClient();
+  const { data: { user } } = await authed.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  const sb = createAdminClient();
+  const { error } = await sb
+    .from("rejected_seeds")
+    .upsert({ username, reason: reason ?? null, marked_by: user.id });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/seeds");
+  return { ok: true };
+}
+
+/** Undo path from the bad-seeds table — the account becomes recommendable again. */
+export async function unmarkBadSeed(username: string) {
+  await requireUser();
+  const sb = createAdminClient();
+  const { error } = await sb.from("rejected_seeds").delete().eq("username", username);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/seeds");
+  return { ok: true };
 }
 
 /**

@@ -4,20 +4,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { SeedManager } from "@/components/seeds/seed-manager";
 import { CrawlJobsList } from "@/components/seeds/crawl-jobs-list";
 import { BioCoverageCard } from "@/components/seeds/bio-coverage";
+import { RecommendedSeeds } from "@/components/seeds/recommended-seeds";
+import { BadSeedsTable } from "@/components/seeds/bad-seeds-table";
 import { getSettings } from "@/lib/config/settings";
 import { getBioCoverage } from "@/app/actions/backfill-bios";
 import { getScrapedSeedIds } from "@/lib/seeds/scraped";
+import { getRecommendedSeeds } from "@/lib/seeds/recommend";
 
 export const dynamic = "force-dynamic";
 
 export default async function SeedsPage() {
   const sb = createAdminClient();
-  const [{ data: allSeeds }, { data: jobs }, settings, coverage, scrapedSeedIds] = await Promise.all([
+  const [{ data: allSeeds }, { data: jobs }, settings, coverage, scrapedSeedIds, recommended, { data: rejectedSeeds }] = await Promise.all([
     sb.from("seeds").select("*").order("created_at", { ascending: false }),
     sb.from("crawl_jobs").select("*, seeds(username)").order("created_at", { ascending: false }).limit(15),
     getSettings(),
     getBioCoverage(),
     getScrapedSeedIds(),
+    getRecommendedSeeds(5),
+    sb.from("rejected_seeds").select("username, reason, created_at").order("created_at", { ascending: false }),
   ]);
 
   const seeds = (allSeeds ?? []).filter((s) => !(s.exhausted_providers as string[])?.includes("cookie"));
@@ -34,6 +39,8 @@ export default async function SeedsPage() {
           they follow — and, for the best matches, the people <em>those</em> people follow.
         </p>
       </div>
+
+      <RecommendedSeeds candidates={recommended} />
 
       <Card>
         <CardHeader>
@@ -88,6 +95,8 @@ export default async function SeedsPage() {
           <CrawlJobsList jobs={jobs ?? []} />
         </CardContent>
       </Card>
+
+      <BadSeedsTable rows={rejectedSeeds ?? []} />
     </div>
   );
 }

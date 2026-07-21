@@ -74,6 +74,13 @@ export const crawlSeed = inngest.createFunction(
     // configured. Only this is safe to draw conclusions from afterwards.
     let lastProvider: string | null = null;
     const allNewUsernames: string[] = [];
+    // Every item this seed's following list actually contains, new or not —
+    // this feeds following_edges (lib/seeds/recommend.ts's network-overlap
+    // signal), which needs the whole list, not just what got inserted as a
+    // fresh lead. allNewUsernames above can't be reused for this: an account
+    // already known from a different seed is a duplicate there (skipped) but
+    // is still a real edge for *this* seed.
+    const allScrapedUsernames: string[] = [];
 
     while (pageIndex < MAX_PAGES) {
       let r;
@@ -103,6 +110,7 @@ export const crawlSeed = inngest.createFunction(
       if (r.items.length === 0) break;
       totalScraped += r.items.length;
       lastProvider = r.provider;
+      allScrapedUsernames.push(...r.items.map((i) => i.username));
 
       const { inserted, duplicates, excluded } = await step.run(`bulk-upsert-${pageIndex}`, () =>
         bulkUpsertDiscoveredLeads(r.items, {
@@ -169,6 +177,31 @@ export const crawlSeed = inngest.createFunction(
         })
         .eq("id", crawl_job_id);
     });
+
+    // Record who-follows-whom for the seed recommender's network-overlap
+    // signal (lib/seeds/recommend.ts). Best-effort: an edges write failing is
+    // never a reason to fail an otherwise-successful crawl.
+    if (allScrapedUsernames.length > 0) {
+      await step.run("record-following-edges", async () => {
+        const sb = createAdminClient();
+        const rows = allScrapedUsernames.map((followed_username) => ({ seed_username, followed_username }));
+        const CHUNK = 500;
+        for (let i = 0; i < rows.length; i += CHUNK) {
+          const { error } = await sb
+            .from("following_edges")
+            .upsert(rows.slice(i, i + CHUNK), { onConflict: "seed_username,followed_username", ignoreDuplicates: true });
+          if (error) {
+            await logError({
+              context: "crawl-seed.following-edges",
+              error_message: error.message,
+              payload: { seed_username, chunk: i },
+              crawl_job_id: crawl_job_id ?? null,
+            });
+            break; // one bad chunk shouldn't retry-loop the whole edge write
+          }
+        }
+      });
+    }
 
     // Backfill metadata only for newly inserted leads.
     // backfill-metadata has concurrency: { limit: 1 } — one event at a time globally —
