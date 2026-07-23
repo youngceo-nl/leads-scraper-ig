@@ -8,7 +8,7 @@ import {
   getDispatchState as dispatchState,
   HandoverError,
 } from "@/lib/handover/batch";
-import { HandoverCsvError } from "@/lib/handover/format";
+import { detectColumns, getCsvHeaders, HandoverCsvError, type ColumnMapping } from "@/lib/handover/format";
 import { getAccountHandoverStats } from "@/lib/handover/overview";
 
 async function requireUser() {
@@ -44,10 +44,25 @@ export async function claimBatch(parentUsername: string) {
   return run(() => claim(parentUsername));
 }
 
-/** Applies one returned Clay CSV across every open batch at once — see applyEnrichmentAll. */
-export async function applyEnrichmentGlobal(csvText: string) {
+/**
+ * Reads a returned Clay CSV's headers before anything is imported, so the
+ * client can tell whether the identifying/email columns were recognized —
+ * and if not, ask the operator which header is which instead of silently
+ * treating an unrecognized email column as "Clay found nothing" (see
+ * lib/handover/format.ts's ColumnMapping doc).
+ */
+export async function previewHandoverCsv(csvText: string) {
   await requireUser();
-  return run(() => applyAll(csvText));
+  return run(async () => {
+    const headers = getCsvHeaders(csvText);
+    return { headers, detected: detectColumns(headers) };
+  });
+}
+
+/** Applies one returned Clay CSV across every open batch at once — see applyEnrichmentAll. */
+export async function applyEnrichmentGlobal(csvText: string, mapping?: ColumnMapping) {
+  const user = await requireUser();
+  return run(() => applyAll(csvText, user.id, mapping));
 }
 
 export async function closeBatch(parentUsername: string) {

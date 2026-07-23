@@ -1,0 +1,3 @@
+bottleneck: AI scoring (many leads are not within ICP, they do something totally different from our niche) PLAN: build a collection of leads AI allowed and were bad so that you can train the system
+
+so with every batch that gets handed back over, there will be leads that have in their rows that they are marked bad leads. You are going to make a table on the leads page that contain these and later on these leads are going to train the system to stop allowing these leads in there. the rejected leads are going to have documented with them why they're bad leads too.

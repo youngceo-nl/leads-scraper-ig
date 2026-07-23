@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { createClaude } from "./client";
 import type { AiClassification } from "@/lib/scoring/types";
+import { stripLoneSurrogates } from "@/lib/scoring/sanitize";
 import type { ScrapedProfile } from "@/lib/types";
 
 const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS and AD/SALES AGENCIES.
@@ -84,7 +85,7 @@ ${SCHEMA_HINT}`;
         model: opts.model,
         max_tokens: 400,
         system: SYSTEM,
-        messages: [{ role: "user", content: userPrompt }],
+        messages: [{ role: "user", content: stripLoneSurrogates(userPrompt) }],
       });
       const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
       const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");

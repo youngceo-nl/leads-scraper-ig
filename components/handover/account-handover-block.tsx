@@ -8,6 +8,7 @@ import { UNATTRIBUTED, hardFilterReasonLabel, type AccountHandover } from "@/lib
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InfoTip } from "@/components/ui/info-tip";
+import { MarkBadLeadButton } from "@/components/leads/mark-bad-lead-button";
 
 export function AccountHandoverBlock({ account }: { account: AccountHandover }) {
   const [pending, start] = useTransition();
@@ -173,6 +174,9 @@ export function AccountHandoverBlock({ account }: { account: AccountHandover }) 
                         ) : (
                           <span className="text-muted-foreground">pending</span>
                         )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <MarkBadLeadButton leadId={lead.id} />
                       </td>
                     </tr>
                   ))}

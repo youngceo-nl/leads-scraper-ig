@@ -24,6 +24,8 @@ import { getSettings, resolveApifyToken } from "@/lib/config/settings";
 import { getAccountHandoverStats } from "@/lib/handover/overview";
 import { HandoverSection } from "@/components/handover/handover-section";
 import { DispatchLock } from "@/components/handover/dispatch-lock";
+import { MarkBadLeadButton } from "@/components/leads/mark-bad-lead-button";
+import { BadLeadsTable, type RejectedLeadRow } from "@/components/leads/bad-leads-table";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 50;
@@ -92,6 +94,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     { count: rejectedCount },
     { count: backfillCount },
     handoverAccounts,
+    { data: badLeadRows },
   ] = await Promise.all([
     getSettings().catch(() => null),
     buildQuery(sort, false),
@@ -113,6 +116,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     // Empty rather than fatal: a missing handover table (migration not yet
     // applied) must not take the whole leads page down.
     getAccountHandoverStats().catch(() => []),
+    // The bad-leads training collection (docs/bottlenecks/bottleneck02.md) —
+    // empty rather than fatal for the same reason as handoverAccounts above.
+    sb.from("rejected_leads")
+      .select("lead_id, username, category, note, created_at")
+      .order("created_at", { ascending: false })
+      .then((r) => (r.error ? { data: [] as RejectedLeadRow[] } : r)),
   ]);
 
   const seedMap = new Map((seeds ?? []).map((s) => [s.id, s.username]));
@@ -234,6 +243,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 <TableHead data-col="level">
                   <HeaderWithTip label="Level" tip="How far this account is from a source account. Level 0 is a source account, level 1 is someone they follow, and so on." />
                 </TableHead>
+                <TableHead className="w-8" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -308,11 +318,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                     ) : "—"}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground" data-col="level">{l.crawl_depth}</TableCell>
+                  <TableCell className="pt-3">
+                    <MarkBadLeadButton leadId={l.id} />
+                  </TableCell>
                 </DoubleClickRow>
               ))}
               {(leads ?? []).length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-sm text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-sm text-muted-foreground py-8">
                     No leads match these filters.
                   </TableCell>
                 </TableRow>
@@ -324,6 +337,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         </CardContent>
       </Card>
       </SelectionProvider>
+
+      <BadLeadsTable rows={badLeadRows ?? []} />
 
       <Pagination page={page} totalPages={totalPages} sp={sp} />
       <LeadEditDialog />

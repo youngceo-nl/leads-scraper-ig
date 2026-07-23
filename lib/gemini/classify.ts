@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import type { AiClassification } from "@/lib/scoring/types";
+import { stripLoneSurrogates } from "@/lib/scoring/sanitize";
 import type { ScrapedProfile } from "@/lib/types";
 
 const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS and AD/SALES AGENCIES.
@@ -108,7 +109,7 @@ ${captions || "(none)"}`;
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          contents: [{ role: "user", parts: [{ text: stripLoneSurrogates(userPrompt) }] }],
           generationConfig: {
             temperature: 0.2,
             maxOutputTokens: 400,

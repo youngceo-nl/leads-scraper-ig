@@ -2,6 +2,7 @@ import "server-only";
 import OpenAI from "openai";
 import { z } from "zod";
 import type { AiClassification } from "@/lib/scoring/types";
+import { stripLoneSurrogates } from "@/lib/scoring/sanitize";
 import type { ScrapedProfile } from "@/lib/types";
 
 const SYSTEM = `You are classifying Instagram accounts for a sales outreach team targeting INFOPRENEURS and AD/SALES AGENCIES.
@@ -99,7 +100,7 @@ ${captions || "(none)"}`;
         model: opts.model,
         messages: [
           { role: "system", content: SYSTEM },
-          { role: "user", content: userPrompt },
+          { role: "user", content: stripLoneSurrogates(userPrompt) },
         ],
         response_format: { type: "json_object" },
         temperature: 0.2,

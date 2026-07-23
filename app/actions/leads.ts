@@ -9,6 +9,7 @@ import { getSettings } from "@/lib/config/settings";
 import { hardFilter, metricsGate } from "@/lib/pipeline/filter";
 import { computeMetrics } from "@/lib/pipeline/metrics";
 import type { ScrapedProfile } from "@/lib/types";
+import { isBadLeadCategory, type BadLeadCategory } from "@/lib/leads/bad-lead";
 
 async function requireUser() {
   const sb = await createClient();
@@ -43,6 +44,78 @@ export async function updateLead(leadId: string, patch: LeadPatch): Promise<{ ok
   if (error) return { ok: false, error: error.message };
   revalidatePath("/leads");
   revalidatePath(`/leads`);
+  return { ok: true };
+}
+
+/**
+ * Human override for a lead the AI qualified but shouldn't have — a training
+ * collection for docs/bottlenecks/bottleneck02.md ("stop allowing these leads
+ * in"). Records the labeled example AND drops the lead from handover (it's no
+ * longer worth paying Clay to find its email) by flipping status to rejected.
+ * Does not touch excluded_usernames — a mislabel here shouldn't permanently
+ * block the account from ever being re-scraped.
+ */
+export async function markBadLead(
+  leadId: string,
+  category: BadLeadCategory,
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+  if (!isBadLeadCategory(category)) return { ok: false, error: `Invalid category: ${category}` };
+
+  const sb = createAdminClient();
+  const { data: lead, error: loadErr } = await sb
+    .from("leads")
+    .select("username, status")
+    .eq("id", leadId)
+    .single();
+  if (loadErr || !lead) return { ok: false, error: loadErr?.message ?? "Lead not found" };
+
+  const { error: upsertErr } = await sb.from("rejected_leads").upsert({
+    lead_id: leadId,
+    username: lead.username,
+    category,
+    note: note?.trim() || null,
+    prior_status: lead.status,
+    marked_by: user.id,
+  });
+  if (upsertErr) return { ok: false, error: upsertErr.message };
+
+  // Drop out of any open handover batch too — the handover pool query only
+  // ever selects status='qualified', so this alone removes it, but clearing
+  // handover_batch_id also frees it from a batch someone already claimed.
+  const { error: updateErr } = await sb
+    .from("leads")
+    .update({ status: "rejected", handover_batch_id: null })
+    .eq("id", leadId);
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  revalidatePath("/leads");
+  return { ok: true };
+}
+
+/** Undo path from the Bad leads table — restores the lead to its pre-mark status. */
+export async function unmarkBadLead(leadId: string): Promise<{ ok: boolean; error?: string }> {
+  await requireUser();
+  const sb = createAdminClient();
+
+  const { data: row, error: loadErr } = await sb
+    .from("rejected_leads")
+    .select("prior_status")
+    .eq("lead_id", leadId)
+    .single();
+  if (loadErr || !row) return { ok: false, error: loadErr?.message ?? "Not marked bad" };
+
+  const { error: updateErr } = await sb
+    .from("leads")
+    .update({ status: (row.prior_status as LeadStatus) ?? "review" })
+    .eq("id", leadId);
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  const { error: deleteErr } = await sb.from("rejected_leads").delete().eq("lead_id", leadId);
+  if (deleteErr) return { ok: false, error: deleteErr.message };
+
+  revalidatePath("/leads");
   return { ok: true };
 }
 

@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { BATCH_SIZE, parseEnrichedCsv, toClipboardText, type HandoverLead } from "@/lib/handover/format";
+import { BATCH_SIZE, parseEnrichedCsv, toClipboardText, type ColumnMapping, type HandoverLead } from "@/lib/handover/format";
 
 export class HandoverError extends Error {}
 
@@ -131,12 +131,24 @@ export async function claimBatch(parentUsername: string): Promise<{ id: string; 
  * not fatal) — e.g. leftovers from a stale export. Any batch that ends up
  * fully enriched by this import is auto-closed, which is how the page-lock
  * (`getDispatchState`) clears without a separate "Close" click.
+ *
+ * A row with `bad_lead_reason` filled in means the operator flagged that lead
+ * bad while working it in Clay — recorded the same way the in-app mark-bad
+ * button does (app/actions/leads.ts markBadLead), rather than as an email
+ * result. An empty cell means the lead is good and goes through the normal
+ * email-recording path below.
+ *
+ * `mapping` is passed only when the column-mapping dialog had to resolve an
+ * ambiguous header (see previewHandoverCsv) — otherwise parseEnrichedCsv
+ * guesses from its own candidate lists, same as before that dialog existed.
  */
 export async function applyEnrichmentAll(
   csvText: string,
-): Promise<{ withEmail: number; withoutEmail: number; skipped: number; closedBatches: number }> {
+  markedBy: string | null = null,
+  mapping?: ColumnMapping,
+): Promise<{ withEmail: number; withoutEmail: number; markedBad: number; skipped: number; closedBatches: number }> {
   const sb = createAdminClient();
-  const rows = parseEnrichedCsv(csvText);
+  const rows = parseEnrichedCsv(csvText, mapping);
 
   const { data: openBatches } = await sb
     .from("handover_batches")
@@ -155,12 +167,35 @@ export async function applyEnrichmentAll(
   const now = new Date().toISOString();
   let withEmail = 0;
   let withoutEmail = 0;
+  let markedBad = 0;
   let skipped = 0;
   const touchedBatchIds = new Set<string>();
 
   for (const row of rows) {
     const lead = byUsername.get(row.username);
     if (!lead) { skipped++; continue; }
+    if (lead.handover_batch_id) touchedBatchIds.add(lead.handover_batch_id);
+
+    if (row.badReason) {
+      const { error: upsertErr } = await sb.from("rejected_leads").upsert({
+        lead_id: lead.id,
+        username: lead.username,
+        category: "other",
+        note: row.badReason,
+        prior_status: "qualified",
+        marked_by: markedBy,
+      });
+      if (upsertErr) throw new HandoverError(upsertErr.message);
+
+      const { error: updateErr } = await sb
+        .from("leads")
+        .update({ status: "rejected", handover_batch_id: null })
+        .eq("id", lead.id);
+      if (updateErr) throw new HandoverError(updateErr.message);
+
+      markedBad++;
+      continue;
+    }
 
     // Stamped even when Clay found nothing, so the lead counts as attempted
     // and doesn't cycle straight back into the pool on close.
@@ -179,7 +214,6 @@ export async function applyEnrichmentAll(
 
     const { error } = await sb.from("leads").update(patch).eq("id", lead.id);
     if (error) throw new HandoverError(error.message);
-    if (lead.handover_batch_id) touchedBatchIds.add(lead.handover_batch_id);
   }
 
   let closedBatches = 0;
@@ -195,7 +229,7 @@ export async function applyEnrichmentAll(
     }
   }
 
-  return { withEmail, withoutEmail, skipped, closedBatches };
+  return { withEmail, withoutEmail, markedBad, skipped, closedBatches };
 }
 
 /**

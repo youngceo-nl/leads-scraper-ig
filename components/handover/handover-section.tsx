@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Handshake, Upload } from "lucide-react";
 import type { AccountHandover } from "@/lib/handover/overview";
+import type { ColumnMapping, DetectedColumns } from "@/lib/handover/format";
 import { AccountHandoverBlock } from "@/components/handover/account-handover-block";
-import { applyEnrichmentGlobal, getHandoverAccounts } from "@/app/actions/handover";
+import { ColumnMappingDialog } from "@/components/handover/column-mapping-dialog";
+import { applyEnrichmentGlobal, getHandoverAccounts, previewHandoverCsv } from "@/app/actions/handover";
 import { Button } from "@/components/ui/button";
 
 const POLL_MS = 5000;
@@ -19,6 +21,10 @@ export function HandoverSection({ initial }: { initial: AccountHandover[] }) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  // Set only when the CSV's identifying/email column couldn't be confidently
+  // recognized — holds the raw text so the dialog's confirmed mapping can be
+  // applied to the exact file the operator picked, without re-reading it.
+  const [pendingCsv, setPendingCsv] = useState<{ text: string; headers: string[]; detected: DetectedColumns } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -52,27 +58,54 @@ export function HandoverSection({ initial }: { initial: AccountHandover[] }) {
   const handedOver = accounts.reduce((sum, a) => sum + a.done, 0);
   const openBatches = accounts.filter((a) => a.openBatch).length;
 
+  // Plain async helper, not itself wrapped in a transition — both callers
+  // below (the auto-import path and the dialog's confirm) run it inside their
+  // own single `start()`, so each user-triggered action is exactly one
+  // transition rather than two nested ones.
+  const runImport = async (text: string, mapping?: ColumnMapping) => {
+    setMessage(null);
+    const result = await applyEnrichmentGlobal(text, mapping);
+    if (!result.ok) {
+      setMessage(`Error: ${result.error ?? "could not import"}`);
+      return;
+    }
+    const parts = [`${result.withEmail} email${result.withEmail === 1 ? "" : "s"} found`];
+    if (result.withoutEmail) parts.push(`${result.withoutEmail} with none`);
+    if (result.markedBad) parts.push(`${result.markedBad} marked bad`);
+    if (result.skipped) parts.push(`${result.skipped} row(s) skipped (no match)`);
+    if (result.closedBatches) {
+      parts.push(`${result.closedBatches} batch${result.closedBatches === 1 ? "" : "es"} closed`);
+    }
+    setMessage(parts.join(", ") + ".");
+    refresh();
+  };
+
   // One CSV can cover leads from several dispatched accounts at once — rows
   // are matched back to leads by username, so there's nothing per-account to
   // route here (see applyEnrichmentAll).
+  //
+  // Previewed before importing: if the identifying or email column can't be
+  // confidently recognized, that's ambiguous rather than "column doesn't
+  // exist" — a wrongly-named column looks identical to a missing one from
+  // header-matching alone, and only the operator can actually tell the two
+  // apart. Silently guessing wrong here is exactly how a whole batch of found
+  // emails went missing once already (see lib/handover/format.ts).
   const upload = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
       start(async () => {
         setMessage(null);
-        const result = await applyEnrichmentGlobal(text);
-        if (!result.ok) {
-          setMessage(`Error: ${result.error ?? "could not import"}`);
+        const preview = await previewHandoverCsv(text);
+        if (!preview.ok) {
+          setMessage(`Error: ${preview.error ?? "could not read file"}`);
           return;
         }
-        const parts = [`${result.withEmail} email${result.withEmail === 1 ? "" : "s"} found`];
-        if (result.withoutEmail) parts.push(`${result.withoutEmail} with none`);
-        if (result.skipped) parts.push(`${result.skipped} row(s) skipped (no match)`);
-        if (result.closedBatches) {
-          parts.push(`${result.closedBatches} batch${result.closedBatches === 1 ? "" : "es"} closed`);
+        if (preview.detected.username == null || preview.detected.email == null) {
+          setPendingCsv({ text, headers: preview.headers, detected: preview.detected });
+          return;
         }
-        setMessage(parts.join(", ") + ".");
+        await runImport(text);
       });
       if (fileRef.current) fileRef.current.value = "";
     };
@@ -120,6 +153,19 @@ export function HandoverSection({ initial }: { initial: AccountHandover[] }) {
             <AccountHandoverBlock key={account.parentUsername} account={account} />
           ))}
         </div>
+      )}
+
+      {pendingCsv && (
+        <ColumnMappingDialog
+          headers={pendingCsv.headers}
+          detected={pendingCsv.detected}
+          onConfirm={(mapping) => {
+            const text = pendingCsv.text;
+            setPendingCsv(null);
+            start(() => runImport(text, mapping));
+          }}
+          onCancel={() => setPendingCsv(null)}
+        />
       )}
     </div>
   );

@@ -59,6 +59,7 @@ export function DispatchLock() {
           return;
         }
         const parts = [`${result.withEmail} email${result.withEmail === 1 ? "" : "s"} found`];
+        if (result.markedBad) parts.push(`${result.markedBad} marked bad`);
         if (result.skipped) parts.push(`${result.skipped} row(s) skipped (no match)`);
         setMessage(parts.join(", ") + ".");
         await refresh();
