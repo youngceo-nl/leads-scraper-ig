@@ -4,6 +4,7 @@ import { cn, scoreColor } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { leadCategory, type LeadCategory } from "@/lib/leads/category";
 import { CategoryTabs, ViewTabs, type OutreachView } from "./outreach-tabs";
+import { OutreachSourceBadge } from "./outreach-source-badge";
 import type { Draft, OutreachRow } from "./outreach-ready-client";
 
 export function OutreachLeadRail({
@@ -79,12 +80,21 @@ export function OutreachLeadRail({
           const d = drafts[row.id];
           const name = (d?.full_name ?? row.full_name ?? "").trim();
           return (
-            <button
+            // A plain div, not a button — the source badge below is itself a
+            // Popover-trigger button, and buttons can't nest inside buttons.
+            <div
               key={row.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(row.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(row.id);
+                }
+              }}
               className={cn(
-                "w-full text-left px-4 py-2.5 border-b hover:bg-accent transition-colors",
+                "w-full text-left px-4 py-2.5 border-b hover:bg-accent transition-colors cursor-pointer",
                 row.id === selectedId && "bg-accent",
                 sent && "opacity-50",
               )}
@@ -106,6 +116,11 @@ export function OutreachLeadRail({
                     {row.business_model ?? "unclassified"}
                   </Badge>
                 )}
+                {row.parent_username && (
+                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <OutreachSourceBadge username={row.parent_username} outcome={row.sourceOutcome} />
+                  </span>
+                )}
               </div>
               {!sent && broken && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
@@ -124,7 +139,7 @@ export function OutreachLeadRail({
                   )}
                 </div>
               )}
-            </button>
+            </div>
           );
         })}
         {visible.length === 0 && (

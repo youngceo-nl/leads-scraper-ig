@@ -5,6 +5,7 @@ import { buildLeadContext, renderTemplate } from "@/lib/outreach/template";
 import { LEAD_CATEGORIES, leadCategory, type CategoryTemplates, type LeadCategory } from "@/lib/leads/category";
 import { syncInbox, markReplyRead } from "@/app/actions/inbox";
 import type { LeadStatus } from "@/lib/types";
+import type { HandoverOutcome } from "@/lib/handover/outcomes";
 import type { OutreachView } from "./outreach-tabs";
 import { OutreachLeadRail } from "./outreach-lead-rail";
 import { OutreachInboxRail } from "./outreach-inbox-rail";
@@ -26,6 +27,8 @@ export type OutreachRow = {
   status: LeadStatus;
   firstName: string | null;
   needsFix: boolean;
+  parent_username: string | null;
+  sourceOutcome: HandoverOutcome | null;
 };
 
 export type InboxRow = {

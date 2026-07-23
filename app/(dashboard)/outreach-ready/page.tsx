@@ -6,6 +6,7 @@ import { extractFirstName, extractFirstNameFromUsername } from "@/lib/outreach/t
 import { Card, CardContent } from "@/components/ui/card";
 import { OutreachReadyClient, type OutreachRow, type InboxRow } from "@/components/outreach/outreach-ready-client";
 import type { CategoryTemplates } from "@/lib/leads/category";
+import { getHandoverOutcomesByParent } from "@/lib/handover/outcomes";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +19,11 @@ export default async function OutreachReadyPage() {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
 
-  const [{ data: leads }, { count: sentToday }, { data: replies }] = await Promise.all([
+  const [{ data: leads }, { count: sentToday }, { data: replies }, handoverOutcomes] = await Promise.all([
     sb
       .from("leads")
       .select(
-        "id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, email, email_provider, email_status, email_v2, email_v2_provider, email_v2_status, overall_score, status, outreach_count",
+        "id, username, full_name, niche, business_model, funnel_program_name, funnel_offer_summary, external_link, email, email_provider, email_status, email_v2, email_v2_provider, email_v2_status, overall_score, status, outreach_count, parent_username",
       )
       .in("status", ["qualified", "review"])
       .or("outreach_count.is.null,outreach_count.eq.0")
@@ -41,6 +42,7 @@ export default async function OutreachReadyPage() {
       .select("id, from_email, from_name, subject, snippet, body_text, received_at, is_read, lead_id, leads(username, full_name, business_model)")
       .order("received_at", { ascending: false })
       .limit(200),
+    getHandoverOutcomesByParent(),
   ]);
 
   const inboxRows: InboxRow[] = (replies ?? []).map((r) => {
@@ -91,6 +93,8 @@ export default async function OutreachReadyPage() {
       status: lead.status,
       firstName,
       needsFix: !lead.funnel_program_name || firstName === null,
+      parent_username: lead.parent_username,
+      sourceOutcome: lead.parent_username ? handoverOutcomes.get(lead.parent_username) ?? null : null,
     });
   }
 
